@@ -15,6 +15,7 @@ export interface SegmentAsyncProps<T> extends SegmentProps<T>, Omit<HTMLProps<HT
   loadOptions: (query?: string) => Promise<Array<SelectableValue<T>>>;
   onChange: (item: SelectableValue<T>) => void;
   defaultOptions?: Array<SelectableValue<T>> | boolean;
+  noOptionMessageHandler?: (state: AsyncState<Array<SelectableValue<T>>>) => string;
 }
 
 export function SegmentAsync<T>({
@@ -27,6 +28,7 @@ export function SegmentAsync<T>({
   disabled,
   placeholder,
   defaultOptions,
+  noOptionMessageHandler = mapStateToNoOptionsMessage,
   ...rest
 }: React.PropsWithChildren<SegmentAsyncProps<T>>) {
   const [state, fetchOptions] = useAsyncFn(loadOptions, [loadOptions]);
@@ -69,7 +71,7 @@ export function SegmentAsync<T>({
       value={value && !_.isObject(value) ? { value } : value}
       options={state.value ?? []}
       width={width}
-      noOptionsMessage={mapStateToNoOptionsMessage(state)}
+      noOptionsMessage={noOptionMessageHandler(state)}
       allowCustomValue={allowCustomValue}
       onClickOutside={() => {
         setExpanded(false);
