@@ -27,13 +27,13 @@ type (
 )
 
 const (
-	MetricEditorModeBuilder = dataquery.CloudWatchMetricsQueryMetricEditorModeN0
-	MetricEditorModeRaw     = dataquery.CloudWatchMetricsQueryMetricEditorModeN1
+	MetricEditorModeBuilder = dataquery.MetricEditorModeN0
+	MetricEditorModeRaw     = dataquery.MetricEditorModeN1
 )
 
 const (
-	MetricQueryTypeSearch = dataquery.CloudWatchMetricsQueryMetricQueryTypeN0
-	MetricQueryTypeQuery  = dataquery.CloudWatchMetricsQueryMetricQueryTypeN1
+	MetricQueryTypeSearch = dataquery.MetricQueryTypeN0
+	MetricQueryTypeQuery  = dataquery.MetricQueryTypeN1
 )
 
 const (
@@ -67,8 +67,8 @@ type CloudWatchQuery struct {
 	MatchExact        bool
 	UsedExpression    string
 	TimezoneUTCOffset string
-	MetricQueryType   dataquery.CloudWatchMetricsQueryMetricQueryType
-	MetricEditorMode  dataquery.CloudWatchMetricsQueryMetricEditorMode
+	MetricQueryType   dataquery.MetricQueryType
+	MetricEditorMode  dataquery.MetricEditorMode
 	AccountId         *string
 }
 
@@ -84,7 +84,7 @@ func (q *CloudWatchQuery) GetGetMetricDataAPIMode() GMDApiMode {
 		return GMDApiModeSQLExpression
 	}
 
-	q.logger.Warn("could not resolve CloudWatch metric query type. Falling back to metric stat.", "query", q)
+	q.logger.Warn("Could not resolve CloudWatch metric query type. Falling back to metric stat.", "query", q)
 	return GMDApiModeMetricStat
 }
 
@@ -166,9 +166,9 @@ func (q *CloudWatchQuery) BuildDeepLink(startTime time.Time, endTime time.Time) 
 	if q.isSearchExpression() {
 		metricExpressions := &metricExpression{Expression: q.UsedExpression}
 		metricExpressions.Label = q.Label
-		link.Metrics = []interface{}{metricExpressions}
+		link.Metrics = []any{metricExpressions}
 	} else {
-		metricStat := []interface{}{q.Namespace, q.MetricName}
+		metricStat := []any{q.Namespace, q.MetricName}
 		for dimensionKey, dimensionValues := range q.Dimensions {
 			metricStat = append(metricStat, dimensionKey, dimensionValues[0])
 		}
@@ -181,7 +181,7 @@ func (q *CloudWatchQuery) BuildDeepLink(startTime time.Time, endTime time.Time) 
 			metricStatMeta.AccountId = *q.AccountId
 		}
 		metricStat = append(metricStat, metricStatMeta)
-		link.Metrics = []interface{}{metricStat}
+		link.Metrics = []any{metricStat}
 	}
 
 	linkProps, err := json.Marshal(link)
@@ -303,9 +303,12 @@ func (q *CloudWatchQuery) validateAndSetDefaults(refId string, metricsDataQuery 
 		return err
 	}
 
-	q.Dimensions, err = parseDimensions(metricsDataQuery.Dimensions)
-	if err != nil {
-		return fmt.Errorf("failed to parse dimensions: %v", err)
+	q.Dimensions = map[string][]string{}
+	if metricsDataQuery.Dimensions != nil {
+		q.Dimensions, err = parseDimensions(*metricsDataQuery.Dimensions)
+		if err != nil {
+			return fmt.Errorf("failed to parse dimensions: %v", err)
+		}
 	}
 
 	if crossAccountQueryingEnabled {
@@ -461,13 +464,13 @@ func getRetainedPeriods(timeSince time.Duration) []int {
 	}
 }
 
-func parseDimensions(dimensions map[string]interface{}) (map[string][]string, error) {
+func parseDimensions(dimensions map[string]any) (map[string][]string, error) {
 	parsedDimensions := make(map[string][]string)
 	for k, v := range dimensions {
 		// This is for backwards compatibility. Before 6.5 dimensions values were stored as strings and not arrays
 		if value, ok := v.(string); ok {
 			parsedDimensions[k] = []string{value}
-		} else if values, ok := v.([]interface{}); ok {
+		} else if values, ok := v.([]any); ok {
 			for _, value := range values {
 				parsedDimensions[k] = append(parsedDimensions[k], value.(string))
 			}

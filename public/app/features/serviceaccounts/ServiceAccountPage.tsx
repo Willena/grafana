@@ -73,16 +73,14 @@ export const ServiceAccountPageUnconnected = ({
     !contextSrv.hasPermission(AccessControlAction.ServiceAccountsWrite) || serviceAccount.isDisabled;
 
   const ableToWrite = contextSrv.hasPermission(AccessControlAction.ServiceAccountsWrite);
-  const canReadPermissions = contextSrv.hasAccessInMetadata(
+  const canReadPermissions = contextSrv.hasPermissionInMetadata(
     AccessControlAction.ServiceAccountsPermissionsRead,
-    serviceAccount!,
-    false
+    serviceAccount!
   );
 
   const pageNav: NavModelItem = {
     text: serviceAccount.name,
     img: serviceAccount.avatarUrl,
-    breadcrumbs: [{ title: 'Service accounts', url: 'org/serviceaccounts' }],
     subTitle: 'Manage settings for an individual service account.',
   };
 

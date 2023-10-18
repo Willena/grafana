@@ -1,4 +1,4 @@
-import { DataFrame, FieldType, MutableDataFrame } from '@grafana/data';
+import { DataFrame, FieldType, createDataFrame } from '@grafana/data';
 
 import { NodeDatum, NodeGraphOptions } from './types';
 import {
@@ -81,27 +81,27 @@ describe('processNodes', () => {
 
   it('detects dataframes correctly', () => {
     const validFrames = [
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'hasPreferredVisualisationType',
         fields: [],
         meta: {
           preferredVisualisationType: 'nodeGraph',
         },
       }),
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'hasName',
         fields: [],
         name: 'nodes',
       }),
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'nodes', // hasRefId
         fields: [],
       }),
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'hasValidNodesShape',
         fields: [{ name: 'id', type: FieldType.string }],
       }),
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'hasValidEdgesShape',
         fields: [
           { name: 'id', type: FieldType.string },
@@ -111,7 +111,7 @@ describe('processNodes', () => {
       }),
     ];
     const invalidFrames = [
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'invalidData',
         fields: [],
       }),
@@ -124,7 +124,7 @@ describe('processNodes', () => {
   });
 
   it('getting fields is case insensitive', () => {
-    const nodeFrame = new MutableDataFrame({
+    const nodeFrame = createDataFrame({
       refId: 'nodes',
       fields: [
         { name: 'id', type: FieldType.string, values: ['id'] },
@@ -132,6 +132,7 @@ describe('processNodes', () => {
         { name: 'SUBTITLE', type: FieldType.string, values: ['subTitle'] },
         { name: 'mainstat', type: FieldType.string, values: ['mainStat'] },
         { name: 'seconDarysTat', type: FieldType.string, values: ['secondaryStat'] },
+        { name: 'nodeRadius', type: FieldType.number, values: [20] },
       ],
     });
 
@@ -142,7 +143,7 @@ describe('processNodes', () => {
     expect(nodeFields.mainStat).toBeDefined();
     expect(nodeFields.secondaryStat).toBeDefined();
 
-    const edgeFrame = new MutableDataFrame({
+    const edgeFrame = createDataFrame({
       refId: 'nodes',
       fields: [
         { name: 'id', type: FieldType.string, values: ['id'] },
@@ -162,7 +163,7 @@ describe('processNodes', () => {
 
   it('interpolates panel options correctly', () => {
     const frames = [
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'nodes',
         fields: [
           { name: 'id', type: FieldType.string },
@@ -173,7 +174,7 @@ describe('processNodes', () => {
           { name: 'arc__tertiary', type: FieldType.string },
         ],
       }),
-      new MutableDataFrame({
+      createDataFrame({
         refId: 'edges',
         fields: [
           { name: 'id', type: FieldType.string },
@@ -312,6 +313,13 @@ function makeNodeDatum(options: Partial<NodeDatum> = {}) {
     subTitle: 'service',
     title: 'service:0',
     icon: 'database',
+    nodeRadius: {
+      config: {},
+      index: 9,
+      name: 'noderadius',
+      type: 'number',
+      values: [40, 40, 40],
+    },
     ...options,
   };
 }
@@ -324,6 +332,8 @@ function makeEdgeDatum(id: string, index: number, mainStat = '', secondaryStat =
     secondaryStat,
     source: id.split('--')[0],
     target: id.split('--')[1],
+    sourceNodeRadius: 40,
+    targetNodeRadius: 40,
   };
 }
 

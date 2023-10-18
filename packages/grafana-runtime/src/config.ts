@@ -4,7 +4,6 @@ import {
   AuthSettings,
   BootData,
   BuildInfo,
-  createTheme,
   DataSourceInstanceSettings,
   FeatureToggles,
   GrafanaConfig,
@@ -16,13 +15,15 @@ import {
   PanelPluginMeta,
   systemDateFormats,
   SystemDateFormatSettings,
-  NewThemeOptions,
+  getThemeById,
   TransformerPluginMeta,
 } from '@grafana/data';
 
 export interface AzureSettings {
   cloud?: string;
   managedIdentityEnabled: boolean;
+  workloadIdentityEnabled: boolean;
+  userIdentityEnabled: boolean;
 }
 
 export type AppPluginConfig = {
@@ -30,10 +31,11 @@ export type AppPluginConfig = {
   path: string;
   version: string;
   preload: boolean;
+  angularDetected?: boolean;
 };
 
 export class GrafanaBootConfig implements GrafanaConfig {
-  isPublicDashboardView: boolean;
+  publicDashboardAccessToken?: string;
   snapshotEnabled = true;
   datasources: { [str: string]: DataSourceInstanceSettings } = {};
   panels: { [key: string]: PanelPluginMeta } = {};
@@ -64,6 +66,7 @@ export class GrafanaBootConfig implements GrafanaConfig {
   queryHistoryEnabled = false;
   helpEnabled = false;
   profileEnabled = false;
+  newsFeedEnabled = true;
   ldapEnabled = false;
   jwtHeaderName = '';
   jwtUrlLogin = false;
@@ -79,7 +82,7 @@ export class GrafanaBootConfig implements GrafanaConfig {
   disableUserSignUp = false;
   loginHint = '';
   passwordHint = '';
-  loginError = undefined;
+  loginError: string | undefined = undefined;
   viewersCanEdit = false;
   editorsCanAdmin = false;
   disableSanitizeHtml = false;
@@ -93,24 +96,11 @@ export class GrafanaBootConfig implements GrafanaConfig {
   anonymousEnabled = false;
   licenseInfo: LicenseInfo = {} as LicenseInfo;
   rendererAvailable = false;
-  dashboardPreviews: {
-    systemRequirements: {
-      met: boolean;
-      requiredImageRendererPluginVersion: string;
-    };
-    thumbnailsExist: boolean;
-  } = { systemRequirements: { met: false, requiredImageRendererPluginVersion: '' }, thumbnailsExist: false };
   rendererVersion = '';
   secretsManagerPluginEnabled = false;
   supportBundlesEnabled = false;
   http2Enabled = false;
   dateFormats?: SystemDateFormatSettings;
-  sentry = {
-    enabled: false,
-    dsn: '',
-    customEndpoint: '',
-    sampleRate: 1,
-  };
   grafanaJavascriptAgent = {
     enabled: false,
     customEndpoint: '',
@@ -130,6 +120,8 @@ export class GrafanaBootConfig implements GrafanaConfig {
   awsAssumeRoleEnabled = false;
   azure: AzureSettings = {
     managedIdentityEnabled: false,
+    workloadIdentityEnabled: false,
+    userIdentityEnabled: false,
   };
   caching = {
     enabled: false,
@@ -137,7 +129,11 @@ export class GrafanaBootConfig implements GrafanaConfig {
   geomapDefaultBaseLayerConfig?: MapLayerOptions;
   geomapDisableCustomBaseLayer?: boolean;
   unifiedAlertingEnabled = false;
-  unifiedAlerting = { minInterval: '', alertStateHistoryBackend: undefined };
+  unifiedAlerting = {
+    minInterval: '',
+    alertStateHistoryBackend: undefined,
+    alertStateHistoryPrimary: undefined,
+  };
   applicationInsightsConnectionString?: string;
   applicationInsightsEndpointUrl?: string;
   recordedQueries = {
@@ -163,11 +159,10 @@ export class GrafanaBootConfig implements GrafanaConfig {
   };
 
   tokenExpirationDayLimit: undefined;
+  disableFrontendSandboxForPlugins: string[] = [];
 
   constructor(options: GrafanaBootConfig) {
     this.bootData = options.bootData;
-    this.bootData.user.lightTheme = getThemeMode(options) === 'light';
-    this.isPublicDashboardView = options.bootData.settings.isPublicDashboardView;
 
     const defaults = {
       datasources: {},
@@ -197,44 +192,39 @@ export class GrafanaBootConfig implements GrafanaConfig {
       systemDateFormats.update(this.dateFormats);
     }
 
-    overrideFeatureTogglesFromUrl(this);
+    if (this.buildInfo.env === 'development') {
+      overrideFeatureTogglesFromUrl(this);
+    }
+
+    overrideFeatureTogglesFromLocalStorage(this);
 
     if (this.featureToggles.disableAngular) {
       this.angularSupportEnabled = false;
     }
 
     // Creating theme after applying feature toggle overrides in case we need to toggle anything
-    this.theme2 = createTheme(getThemeCustomizations(this));
-
+    this.theme2 = getThemeById(this.bootData.user.theme);
+    this.bootData.user.lightTheme = this.theme2.isLight;
     this.theme = this.theme2.v1;
-    // Special feature toggle that impact theme/component looks
-    this.theme2.flags.topnav = this.featureToggles.topnav;
   }
 }
 
-function getThemeMode(config: GrafanaBootConfig) {
-  let mode: 'light' | 'dark' = 'dark';
-  const themePref = config.bootData.user.theme;
-
-  if (themePref === 'light' || themePref === 'dark') {
-    mode = themePref;
-  } else if (themePref === 'system') {
-    const mediaResult = window.matchMedia('(prefers-color-scheme: dark)');
-    mode = mediaResult.matches ? 'dark' : 'light';
+// localstorage key: grafana.featureToggles
+// example value: panelEditor=1,panelInspector=1
+function overrideFeatureTogglesFromLocalStorage(config: GrafanaBootConfig) {
+  const featureToggles = config.featureToggles;
+  const localStorageKey = 'grafana.featureToggles';
+  const localStorageValue = window.localStorage.getItem(localStorageKey);
+  if (localStorageValue) {
+    const features = localStorageValue.split(',');
+    for (const feature of features) {
+      const [featureName, featureValue] = feature.split('=');
+      const toggleState = featureValue === 'true' || featureValue === '1';
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      featureToggles[featureName as keyof FeatureToggles] = toggleState;
+      console.log(`Setting feature toggle ${featureName} = ${toggleState} via localstorage`);
+    }
   }
-
-  return mode;
-}
-
-function getThemeCustomizations(config: GrafanaBootConfig) {
-  // if/when we remove CurrentUserDTO.lightTheme, change this to use getThemeMode instead
-  const mode = config.bootData.user.lightTheme ? 'light' : 'dark';
-
-  const themeOptions: NewThemeOptions = {
-    colors: { mode },
-  };
-
-  return themeOptions;
 }
 
 function overrideFeatureTogglesFromUrl(config: GrafanaBootConfig) {
@@ -250,7 +240,7 @@ function overrideFeatureTogglesFromUrl(config: GrafanaBootConfig) {
       const toggleState = value === 'true' || value === ''; // browser rewrites true as ''
       if (toggleState !== featureToggles[key]) {
         featureToggles[featureName] = toggleState;
-        console.log(`Setting feature toggle ${featureName} = ${toggleState}`);
+        console.log(`Setting feature toggle ${featureName} = ${toggleState} via url`);
       }
     }
   });

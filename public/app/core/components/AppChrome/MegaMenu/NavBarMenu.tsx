@@ -46,10 +46,10 @@ export function NavBarMenu({ activeItem, navItems, searchBarHidden, onClose }: P
   );
 
   useEffect(() => {
-    if (state.megaMenuOpen) {
+    if (state.megaMenu === 'open') {
       setIsOpen(true);
     }
-  }, [state.megaMenuOpen]);
+  }, [state.megaMenu]);
 
   return (
     <OverlayContainer>
@@ -67,6 +67,7 @@ export function NavBarMenu({ activeItem, navItems, searchBarHidden, onClose }: P
               <Icon name="bars" size="xl" />
               <IconButton
                 aria-label="Close navigation menu"
+                tooltip="Close menu"
                 name="times"
                 onClick={onMenuClose}
                 size="xl"

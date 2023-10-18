@@ -12,7 +12,6 @@ import (
 	"github.com/grafana/grafana/pkg/services/store/kind/folder"
 	"github.com/grafana/grafana/pkg/services/store/kind/geojson"
 	"github.com/grafana/grafana/pkg/services/store/kind/jsonobj"
-	"github.com/grafana/grafana/pkg/services/store/kind/playlist"
 	"github.com/grafana/grafana/pkg/services/store/kind/png"
 	"github.com/grafana/grafana/pkg/services/store/kind/preferences"
 	"github.com/grafana/grafana/pkg/services/store/kind/snapshot"
@@ -30,10 +29,6 @@ type KindRegistry interface {
 
 func NewKindRegistry() KindRegistry {
 	kinds := make(map[string]*kindValues)
-	kinds[entity.StandardKindPlaylist] = &kindValues{
-		info:    playlist.GetEntityKindInfo(),
-		builder: playlist.GetEntitySummaryBuilder(),
-	}
 	kinds[entity.StandardKindDashboard] = &kindValues{
 		info:    dashboard.GetEntityKindInfo(),
 		builder: dashboard.GetEntitySummaryBuilder(),
@@ -144,6 +139,10 @@ func (r *registry) GetSummaryBuilder(kind string) entity.EntitySummaryBuilder {
 	defer r.mutex.RUnlock()
 
 	v, ok := r.kinds[kind]
+	if !ok {
+		// fallback to default
+		v, ok = r.kinds[entity.StandardKindJSONObj]
+	}
 	if ok {
 		return v.builder
 	}

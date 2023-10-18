@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -28,7 +29,10 @@ import (
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/clients"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/kinds/dataquery"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/models"
+	"github.com/patrickmn/go-cache"
 )
+
+const tagValueCacheExpiration = time.Hour * 24
 
 type DataQueryJson struct {
 	dataquery.CloudWatchAnnotationQuery
@@ -36,8 +40,9 @@ type DataQueryJson struct {
 }
 
 type DataSource struct {
-	Settings   models.CloudWatchSettings
-	HTTPClient *http.Client
+	Settings      models.CloudWatchSettings
+	HTTPClient    *http.Client
+	tagValueCache *cache.Cache
 }
 
 const (
@@ -84,13 +89,13 @@ func newExecutor(im instancemgmt.InstanceManager, cfg *setting.Cfg, sessions Ses
 }
 
 func NewInstanceSettings(httpClientProvider httpclient.Provider) datasource.InstanceFactoryFunc {
-	return func(settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	return func(ctx context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		instanceSettings, err := models.LoadCloudWatchSettings(settings)
 		if err != nil {
 			return nil, fmt.Errorf("error reading settings: %w", err)
 		}
 
-		opts, err := settings.HTTPClientOptions()
+		opts, err := settings.HTTPClientOptions(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -101,8 +106,9 @@ func NewInstanceSettings(httpClientProvider httpclient.Provider) datasource.Inst
 		}
 
 		return DataSource{
-			Settings:   instanceSettings,
-			HTTPClient: httpClient,
+			Settings:      instanceSettings,
+			HTTPClient:    httpClient,
+			tagValueCache: cache.New(tagValueCacheExpiration, tagValueCacheExpiration*5),
 		}, nil
 	}
 }
@@ -118,9 +124,9 @@ type cloudWatchExecutor struct {
 	resourceHandler backend.CallResourceHandler
 }
 
-func (e *cloudWatchExecutor) getRequestContext(pluginCtx backend.PluginContext, region string) (models.RequestContext, error) {
+func (e *cloudWatchExecutor) getRequestContext(ctx context.Context, pluginCtx backend.PluginContext, region string) (models.RequestContext, error) {
 	r := region
-	instance, err := e.getInstance(pluginCtx)
+	instance, err := e.getInstance(ctx, pluginCtx)
 	if region == defaultRegion {
 		if err != nil {
 			return models.RequestContext{}, err
@@ -128,16 +134,24 @@ func (e *cloudWatchExecutor) getRequestContext(pluginCtx backend.PluginContext, 
 		r = instance.Settings.Region
 	}
 
-	sess, err := e.newSession(pluginCtx, r)
+	ec2Client, err := e.getEC2Client(ctx, pluginCtx, defaultRegion)
 	if err != nil {
 		return models.RequestContext{}, err
 	}
+
+	sess, err := e.newSession(ctx, pluginCtx, r)
+	if err != nil {
+		return models.RequestContext{}, err
+	}
+
 	return models.RequestContext{
 		OAMAPIProvider:        NewOAMAPI(sess),
 		MetricsClientProvider: clients.NewMetricsClient(NewMetricsAPI(sess), e.cfg),
 		LogsAPIProvider:       NewLogsAPI(sess),
+		EC2APIProvider:        ec2Client,
 		Settings:              instance.Settings,
 		Features:              e.features,
+		Logger:                logger,
 	}, nil
 }
 
@@ -147,13 +161,6 @@ func (e *cloudWatchExecutor) CallResource(ctx context.Context, req *backend.Call
 
 func (e *cloudWatchExecutor) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	logger := logger.FromContext(ctx)
-	/*
-		Unlike many other data sources, with Cloudwatch Logs query requests don't receive the results as the response
-		to the query, but rather an ID is first returned. Following this, a client is expected to send requests along
-		with the ID until the status of the query is complete, receiving (possibly partial) results each time. For
-		queries made via dashboards and Explore, the logic of making these repeated queries is handled on the
-		frontend, but because alerts and expressions are executed on the backend the logic needs to be reimplemented here.
-	*/
 	q := req.Queries[0]
 	var model DataQueryJson
 	err := json.Unmarshal(q.JSON, &model)
@@ -171,7 +178,7 @@ func (e *cloudWatchExecutor) QueryData(ctx context.Context, req *backend.QueryDa
 	var result *backend.QueryDataResponse
 	switch model.Type {
 	case annotationQuery:
-		result, err = e.executeAnnotationQuery(req.PluginContext, model, q)
+		result, err = e.executeAnnotationQuery(ctx, req.PluginContext, model, q)
 	case logAction:
 		result, err = e.executeLogActions(ctx, logger, req)
 	case timeSeriesQuery:
@@ -188,13 +195,13 @@ func (e *cloudWatchExecutor) CheckHealth(ctx context.Context, req *backend.Check
 	metricsTest := "Successfully queried the CloudWatch metrics API."
 	logsTest := "Successfully queried the CloudWatch logs API."
 
-	err := e.checkHealthMetrics(req.PluginContext)
+	err := e.checkHealthMetrics(ctx, req.PluginContext)
 	if err != nil {
 		status = backend.HealthStatusError
 		metricsTest = fmt.Sprintf("CloudWatch metrics query failed: %s", err.Error())
 	}
 
-	err = e.checkHealthLogs(req.PluginContext)
+	err = e.checkHealthLogs(ctx, req.PluginContext)
 	if err != nil {
 		status = backend.HealthStatusError
 		logsTest = fmt.Sprintf("CloudWatch logs query failed: %s", err.Error())
@@ -206,7 +213,7 @@ func (e *cloudWatchExecutor) CheckHealth(ctx context.Context, req *backend.Check
 	}, nil
 }
 
-func (e *cloudWatchExecutor) checkHealthMetrics(pluginCtx backend.PluginContext) error {
+func (e *cloudWatchExecutor) checkHealthMetrics(ctx context.Context, pluginCtx backend.PluginContext) error {
 	namespace := "AWS/Billing"
 	metric := "EstimatedCharges"
 	params := &cloudwatch.ListMetricsInput{
@@ -214,7 +221,7 @@ func (e *cloudWatchExecutor) checkHealthMetrics(pluginCtx backend.PluginContext)
 		MetricName: &metric,
 	}
 
-	session, err := e.newSession(pluginCtx, defaultRegion)
+	session, err := e.newSession(ctx, pluginCtx, defaultRegion)
 	if err != nil {
 		return err
 	}
@@ -223,8 +230,8 @@ func (e *cloudWatchExecutor) checkHealthMetrics(pluginCtx backend.PluginContext)
 	return err
 }
 
-func (e *cloudWatchExecutor) checkHealthLogs(pluginCtx backend.PluginContext) error {
-	session, err := e.newSession(pluginCtx, defaultRegion)
+func (e *cloudWatchExecutor) checkHealthLogs(ctx context.Context, pluginCtx backend.PluginContext) error {
+	session, err := e.newSession(ctx, pluginCtx, defaultRegion)
 	if err != nil {
 		return err
 	}
@@ -233,13 +240,16 @@ func (e *cloudWatchExecutor) checkHealthLogs(pluginCtx backend.PluginContext) er
 	return err
 }
 
-func (e *cloudWatchExecutor) newSession(pluginCtx backend.PluginContext, region string) (*session.Session, error) {
-	instance, err := e.getInstance(pluginCtx)
+func (e *cloudWatchExecutor) newSession(ctx context.Context, pluginCtx backend.PluginContext, region string) (*session.Session, error) {
+	instance, err := e.getInstance(ctx, pluginCtx)
 	if err != nil {
 		return nil, err
 	}
 
 	if region == defaultRegion {
+		if len(instance.Settings.Region) == 0 {
+			return nil, models.ErrMissingRegion
+		}
 		region = instance.Settings.Region
 	}
 
@@ -272,8 +282,8 @@ func (e *cloudWatchExecutor) newSession(pluginCtx backend.PluginContext, region 
 	return sess, nil
 }
 
-func (e *cloudWatchExecutor) getInstance(pluginCtx backend.PluginContext) (*DataSource, error) {
-	i, err := e.im.Get(pluginCtx)
+func (e *cloudWatchExecutor) getInstance(ctx context.Context, pluginCtx backend.PluginContext) (*DataSource, error) {
+	i, err := e.im.Get(ctx, pluginCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -282,16 +292,16 @@ func (e *cloudWatchExecutor) getInstance(pluginCtx backend.PluginContext) (*Data
 	return &instance, nil
 }
 
-func (e *cloudWatchExecutor) getCWClient(pluginCtx backend.PluginContext, region string) (cloudwatchiface.CloudWatchAPI, error) {
-	sess, err := e.newSession(pluginCtx, region)
+func (e *cloudWatchExecutor) getCWClient(ctx context.Context, pluginCtx backend.PluginContext, region string) (cloudwatchiface.CloudWatchAPI, error) {
+	sess, err := e.newSession(ctx, pluginCtx, region)
 	if err != nil {
 		return nil, err
 	}
 	return NewCWClient(sess), nil
 }
 
-func (e *cloudWatchExecutor) getCWLogsClient(pluginCtx backend.PluginContext, region string) (cloudwatchlogsiface.CloudWatchLogsAPI, error) {
-	sess, err := e.newSession(pluginCtx, region)
+func (e *cloudWatchExecutor) getCWLogsClient(ctx context.Context, pluginCtx backend.PluginContext, region string) (cloudwatchlogsiface.CloudWatchLogsAPI, error) {
+	sess, err := e.newSession(ctx, pluginCtx, region)
 	if err != nil {
 		return nil, err
 	}
@@ -301,18 +311,18 @@ func (e *cloudWatchExecutor) getCWLogsClient(pluginCtx backend.PluginContext, re
 	return logsClient, nil
 }
 
-func (e *cloudWatchExecutor) getEC2Client(pluginCtx backend.PluginContext, region string) (models.EC2APIProvider, error) {
-	sess, err := e.newSession(pluginCtx, region)
+func (e *cloudWatchExecutor) getEC2Client(ctx context.Context, pluginCtx backend.PluginContext, region string) (models.EC2APIProvider, error) {
+	sess, err := e.newSession(ctx, pluginCtx, region)
 	if err != nil {
 		return nil, err
 	}
 
-	return newEC2Client(sess), nil
+	return NewEC2Client(sess), nil
 }
 
-func (e *cloudWatchExecutor) getRGTAClient(pluginCtx backend.PluginContext, region string) (resourcegroupstaggingapiiface.ResourceGroupsTaggingAPIAPI,
+func (e *cloudWatchExecutor) getRGTAClient(ctx context.Context, pluginCtx backend.PluginContext, region string) (resourcegroupstaggingapiiface.ResourceGroupsTaggingAPIAPI,
 	error) {
-	sess, err := e.newSession(pluginCtx, region)
+	sess, err := e.newSession(ctx, pluginCtx, region)
 	if err != nil {
 		return nil, err
 	}

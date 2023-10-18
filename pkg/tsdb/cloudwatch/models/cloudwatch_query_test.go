@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/kindsys"
+
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/kinds/dataquery"
-	"github.com/grafana/kindsys"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -590,11 +591,11 @@ func Test_ParseMetricDataQueries_periods(t *testing.T) {
 }
 
 func Test_ParseMetricDataQueries_query_type_and_metric_editor_mode_and_GMD_query_api_mode(t *testing.T) {
-	const dummyTestEditorMode dataquery.CloudWatchMetricsQueryMetricEditorMode = 99
+	const dummyTestEditorMode dataquery.MetricEditorMode = 99
 	testCases := map[string]struct {
 		extraDataQueryJson       string
-		expectedMetricQueryType  dataquery.CloudWatchMetricsQueryMetricQueryType
-		expectedMetricEditorMode dataquery.CloudWatchMetricsQueryMetricEditorMode
+		expectedMetricQueryType  dataquery.MetricQueryType
+		expectedMetricEditorMode dataquery.MetricEditorMode
 		expectedGMDApiMode       GMDApiMode
 	}{
 		"no metric query type, no metric editor mode, no expression": {
@@ -901,8 +902,8 @@ func Test_migrateAliasToDynamicLabel_single_query_preserves_old_alias_and_create
 					Namespace:  "ec2",
 					MetricName: kindsys.Ptr("CPUUtilization"),
 					Alias:      kindsys.Ptr(tc.inputAlias),
-					Dimensions: map[string]interface{}{
-						"InstanceId": []interface{}{"test"},
+					Dimensions: &dataquery.Dimensions{
+						"InstanceId": []any{"test"},
 					},
 					Statistic: &average,
 					Period:    kindsys.Ptr("600"),

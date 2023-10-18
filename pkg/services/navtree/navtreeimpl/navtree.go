@@ -7,7 +7,6 @@ import (
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/infra/kvstore"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/plugins"
 	ac "github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/apikey"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
@@ -18,6 +17,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/navtree"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginsettings"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	pref "github.com/grafana/grafana/pkg/services/preference"
 	"github.com/grafana/grafana/pkg/services/star"
 	"github.com/grafana/grafana/pkg/services/supportbundles/supportbundlesimpl"
@@ -28,7 +28,7 @@ type ServiceImpl struct {
 	cfg                  *setting.Cfg
 	log                  log.Logger
 	accessControl        ac.AccessControl
-	pluginStore          plugins.Store
+	pluginStore          pluginstore.Store
 	pluginSettings       pluginsettings.Service
 	starService          star.Service
 	features             *featuremgmt.FeatureManager
@@ -50,7 +50,7 @@ type NavigationAppConfig struct {
 	Icon       string
 }
 
-func ProvideService(cfg *setting.Cfg, accessControl ac.AccessControl, pluginStore plugins.Store, pluginSettings pluginsettings.Service, starService star.Service, features *featuremgmt.FeatureManager, dashboardService dashboards.DashboardService, accesscontrolService ac.Service, kvStore kvstore.KVStore, apiKeyService apikey.Service, license licensing.Licensing) navtree.Service {
+func ProvideService(cfg *setting.Cfg, accessControl ac.AccessControl, pluginStore pluginstore.Store, pluginSettings pluginsettings.Service, starService star.Service, features *featuremgmt.FeatureManager, dashboardService dashboards.DashboardService, accesscontrolService ac.Service, kvStore kvstore.KVStore, apiKeyService apikey.Service, license licensing.Licensing) navtree.Service {
 	service := &ServiceImpl{
 		cfg:                  cfg,
 		log:                  log.New("navtree service"),
@@ -72,13 +72,13 @@ func ProvideService(cfg *setting.Cfg, accessControl ac.AccessControl, pluginStor
 }
 
 //nolint:gocyclo
-func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, hasEditPerm bool, prefs *pref.Preference) (*navtree.NavTreeRoot, error) {
+func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, prefs *pref.Preference) (*navtree.NavTreeRoot, error) {
 	hasAccess := ac.HasAccess(s.accessControl, c)
 	treeRoot := &navtree.NavTreeRoot{}
 
 	treeRoot.AddSection(s.getHomeNode(c, prefs))
 
-	if hasAccess(ac.ReqSignedIn, ac.EvalPermission(dashboards.ActionDashboardsRead)) {
+	if hasAccess(ac.EvalPermission(dashboards.ActionDashboardsRead)) {
 		starredItemsLinks, err := s.buildStarredItemsNavLinks(c)
 		if err != nil {
 			return nil, err
@@ -95,11 +95,11 @@ func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, hasEditPerm bool, p
 		})
 	}
 
-	if c.IsPublicDashboardView || hasAccess(ac.ReqSignedIn, ac.EvalAny(
+	if c.IsPublicDashboardView() || hasAccess(ac.EvalAny(
 		ac.EvalPermission(dashboards.ActionFoldersRead), ac.EvalPermission(dashboards.ActionFoldersCreate),
 		ac.EvalPermission(dashboards.ActionDashboardsRead), ac.EvalPermission(dashboards.ActionDashboardsCreate)),
 	) {
-		dashboardChildLinks := s.buildDashboardNavLinks(c, hasEditPerm)
+		dashboardChildLinks := s.buildDashboardNavLinks(c)
 
 		dashboardLink := &navtree.NavLink{
 			Text:       "Dashboards",
@@ -114,11 +114,7 @@ func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, hasEditPerm bool, p
 		treeRoot.AddSection(dashboardLink)
 	}
 
-	canExplore := func(context *contextmodel.ReqContext) bool {
-		return c.OrgRole == org.RoleAdmin || c.OrgRole == org.RoleEditor || s.cfg.ViewersCanEdit
-	}
-
-	if setting.ExploreEnabled && hasAccess(canExplore, ac.EvalPermission(ac.ActionDatasourcesExplore)) {
+	if setting.ExploreEnabled && hasAccess(ac.EvalPermission(ac.ActionDatasourcesExplore)) {
 		treeRoot.AddSection(&navtree.NavLink{
 			Text:       "Explore",
 			Id:         "explore",
@@ -133,7 +129,7 @@ func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, hasEditPerm bool, p
 		treeRoot.AddSection(s.getProfileNode(c))
 	}
 
-	_, uaIsDisabledForOrg := s.cfg.UnifiedAlerting.DisabledOrgs[c.OrgID]
+	_, uaIsDisabledForOrg := s.cfg.UnifiedAlerting.DisabledOrgs[c.SignedInUser.GetOrgID()]
 	uaVisibleForOrg := s.cfg.UnifiedAlerting.IsEnabled() && !uaIsDisabledForOrg
 
 	if setting.AlertingEnabled != nil && *setting.AlertingEnabled {
@@ -141,15 +137,13 @@ func (s *ServiceImpl) GetNavTree(c *contextmodel.ReqContext, hasEditPerm bool, p
 			treeRoot.AddSection(legacyAlertSection)
 		}
 	} else if uaVisibleForOrg {
-		if alertingSection := s.buildAlertNavLinks(c, hasEditPerm); alertingSection != nil {
+		if alertingSection := s.buildAlertNavLinks(c); alertingSection != nil {
 			treeRoot.AddSection(alertingSection)
 		}
 	}
 
-	if s.features.IsEnabled(featuremgmt.FlagDataConnectionsConsole) {
-		if connectionsSection := s.buildDataConnectionsNavLink(c); connectionsSection != nil {
-			treeRoot.AddSection(connectionsSection)
-		}
+	if connectionsSection := s.buildDataConnectionsNavLink(c); connectionsSection != nil {
+		treeRoot.AddSection(connectionsSection)
 	}
 
 	orgAdminNode, err := s.getAdminNode(c)
@@ -220,7 +214,7 @@ func (s *ServiceImpl) addHelpLinks(treeRoot *navtree.NavTreeRoot, c *contextmode
 			ac.EvalPermission(supportbundlesimpl.ActionCreate),
 		)
 
-		if isSupportBundlesEnabled(s) && hasAccess(ac.ReqGrafanaAdmin, supportBundleAccess) {
+		if isSupportBundlesEnabled(s) && hasAccess(supportBundleAccess) {
 			supportBundleNode := &navtree.NavLink{
 				Text:       "Support bundles",
 				Id:         "support-bundles",
@@ -300,7 +294,7 @@ func (s *ServiceImpl) buildStarredItemsNavLinks(c *contextmodel.ReqContext) ([]*
 		for id := range starredDashboardResult.UserStars {
 			ids = append(ids, id)
 		}
-		starredDashboards, err := s.dashboardService.GetDashboards(c.Req.Context(), &dashboards.GetDashboardsQuery{DashboardIDs: ids, OrgID: c.OrgID})
+		starredDashboards, err := s.dashboardService.GetDashboards(c.Req.Context(), &dashboards.GetDashboardsQuery{DashboardIDs: ids, OrgID: c.SignedInUser.GetOrgID()})
 		if err != nil {
 			return nil, err
 		}
@@ -324,11 +318,8 @@ func (s *ServiceImpl) buildStarredItemsNavLinks(c *contextmodel.ReqContext) ([]*
 	return starredItemsChildNavs, nil
 }
 
-func (s *ServiceImpl) buildDashboardNavLinks(c *contextmodel.ReqContext, hasEditPerm bool) []*navtree.NavLink {
+func (s *ServiceImpl) buildDashboardNavLinks(c *contextmodel.ReqContext) []*navtree.NavLink {
 	hasAccess := ac.HasAccess(s.accessControl, c)
-	hasEditPermInAnyFolder := func(c *contextmodel.ReqContext) bool {
-		return hasEditPerm
-	}
 
 	dashboardChildNavs := []*navtree.NavLink{}
 
@@ -374,17 +365,15 @@ func (s *ServiceImpl) buildDashboardNavLinks(c *contextmodel.ReqContext, hasEdit
 		})
 	}
 
-	if hasEditPerm {
-		if hasAccess(hasEditPermInAnyFolder, ac.EvalPermission(dashboards.ActionDashboardsCreate)) {
-			dashboardChildNavs = append(dashboardChildNavs, &navtree.NavLink{
-				Text: "New dashboard", Icon: "plus", Url: s.cfg.AppSubURL + "/dashboard/new", HideFromTabs: true, Id: "dashboards/new", IsCreateAction: true,
-			})
+	if hasAccess(ac.EvalPermission(dashboards.ActionDashboardsCreate)) {
+		dashboardChildNavs = append(dashboardChildNavs, &navtree.NavLink{
+			Text: "New dashboard", Icon: "plus", Url: s.cfg.AppSubURL + "/dashboard/new", HideFromTabs: true, Id: "dashboards/new", IsCreateAction: true,
+		})
 
-			dashboardChildNavs = append(dashboardChildNavs, &navtree.NavLink{
-				Text: "Import dashboard", SubTitle: "Import dashboard from file or Grafana.com", Id: "dashboards/import", Icon: "plus",
-				Url: s.cfg.AppSubURL + "/dashboard/import", HideFromTabs: true, IsCreateAction: true,
-			})
-		}
+		dashboardChildNavs = append(dashboardChildNavs, &navtree.NavLink{
+			Text: "Import dashboard", SubTitle: "Import dashboard from file or Grafana.com", Id: "dashboards/import", Icon: "plus",
+			Url: s.cfg.AppSubURL + "/dashboard/import", HideFromTabs: true, IsCreateAction: true,
+		})
 	}
 
 	return dashboardChildNavs
@@ -416,17 +405,17 @@ func (s *ServiceImpl) buildLegacyAlertNavLinks(c *contextmodel.ReqContext) *navt
 	return &alertNav
 }
 
-func (s *ServiceImpl) buildAlertNavLinks(c *contextmodel.ReqContext, hasEditPerm bool) *navtree.NavLink {
+func (s *ServiceImpl) buildAlertNavLinks(c *contextmodel.ReqContext) *navtree.NavLink {
 	hasAccess := ac.HasAccess(s.accessControl, c)
 	var alertChildNavs []*navtree.NavLink
 
-	if hasAccess(ac.ReqViewer, ac.EvalAny(ac.EvalPermission(ac.ActionAlertingRuleRead), ac.EvalPermission(ac.ActionAlertingRuleExternalRead))) {
+	if hasAccess(ac.EvalAny(ac.EvalPermission(ac.ActionAlertingRuleRead), ac.EvalPermission(ac.ActionAlertingRuleExternalRead))) {
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{
 			Text: "Alert rules", SubTitle: "Rules that determine whether an alert will fire", Id: "alert-list", Url: s.cfg.AppSubURL + "/alerting/list", Icon: "list-ul",
 		})
 	}
 
-	if hasAccess(ac.ReqOrgAdminOrEditor, ac.EvalAny(ac.EvalPermission(ac.ActionAlertingNotificationsRead), ac.EvalPermission(ac.ActionAlertingNotificationsExternalRead))) {
+	if hasAccess(ac.EvalAny(ac.EvalPermission(ac.ActionAlertingNotificationsRead), ac.EvalPermission(ac.ActionAlertingNotificationsExternalRead))) {
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{
 			Text: "Contact points", SubTitle: "Choose how to notify your  contact points when an alert instance fires", Id: "receivers", Url: s.cfg.AppSubURL + "/alerting/notifications",
 			Icon: "comment-alt-share",
@@ -434,7 +423,7 @@ func (s *ServiceImpl) buildAlertNavLinks(c *contextmodel.ReqContext, hasEditPerm
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{Text: "Notification policies", SubTitle: "Determine how alerts are routed to contact points", Id: "am-routes", Url: s.cfg.AppSubURL + "/alerting/routes", Icon: "sitemap"})
 	}
 
-	if hasAccess(ac.ReqViewer, ac.EvalAny(ac.EvalPermission(ac.ActionAlertingInstanceRead), ac.EvalPermission(ac.ActionAlertingInstancesExternalRead))) {
+	if hasAccess(ac.EvalAny(ac.EvalPermission(ac.ActionAlertingInstanceRead), ac.EvalPermission(ac.ActionAlertingInstancesExternalRead))) {
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{Text: "Silences", SubTitle: "Stop notifications from one or more alerting rules", Id: "silences", Url: s.cfg.AppSubURL + "/alerting/silences", Icon: "bell-slash"})
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{Text: "Alert groups", SubTitle: "See grouped alerts from an Alertmanager instance", Id: "groups", Url: s.cfg.AppSubURL + "/alerting/groups", Icon: "layer-group"})
 	}
@@ -446,9 +435,7 @@ func (s *ServiceImpl) buildAlertNavLinks(c *contextmodel.ReqContext, hasEditPerm
 		})
 	}
 
-	fallbackHasEditPerm := func(*contextmodel.ReqContext) bool { return hasEditPerm }
-
-	if hasAccess(fallbackHasEditPerm, ac.EvalAny(ac.EvalPermission(ac.ActionAlertingRuleCreate), ac.EvalPermission(ac.ActionAlertingRuleExternalWrite))) {
+	if hasAccess(ac.EvalAny(ac.EvalPermission(ac.ActionAlertingRuleCreate), ac.EvalPermission(ac.ActionAlertingRuleExternalWrite))) {
 		alertChildNavs = append(alertChildNavs, &navtree.NavLink{
 			Text: "Create alert rule", SubTitle: "Create an alert rule", Id: "alert",
 			Icon: "plus", Url: s.cfg.AppSubURL + "/alerting/new", HideFromTabs: true, IsCreateAction: true,
@@ -480,30 +467,23 @@ func (s *ServiceImpl) buildDataConnectionsNavLink(c *contextmodel.ReqContext) *n
 
 	baseUrl := s.cfg.AppSubURL + "/connections"
 
-	if hasAccess(ac.ReqOrgAdmin, datasources.ConfigurationPageAccess) {
-		// Connect data
+	if hasAccess(datasources.ConfigurationPageAccess) {
+		// Add new connection
 		children = append(children, &navtree.NavLink{
-			Id:        "connections-connect-data",
-			Text:      "Connect data",
-			SubTitle:  "Browse and create new connections",
-			IsSection: true,
-			Url:       s.cfg.AppSubURL + "/connections/connect-data",
-			Children:  []*navtree.NavLink{},
+			Id:       "connections-add-new-connection",
+			Text:     "Add new connection",
+			SubTitle: "Browse and create new connections",
+			Url:      baseUrl + "/add-new-connection",
+			Children: []*navtree.NavLink{},
 		})
 
-		// Your connections
+		// Data sources
 		children = append(children, &navtree.NavLink{
-			Id:       "connections-your-connections",
-			Text:     "Your connections",
-			SubTitle: "Manage your existing connections",
-			Url:      baseUrl + "/your-connections",
-			// Datasources
-			Children: []*navtree.NavLink{{
-				Id:       "connections-your-connections-datasources",
-				Text:     "Data sources",
-				SubTitle: "View and manage your connected data source connections",
-				Url:      baseUrl + "/your-connections/datasources",
-			}},
+			Id:       "connections-datasources",
+			Text:     "Data sources",
+			SubTitle: "View and manage your connected data source connections",
+			Url:      baseUrl + "/datasources",
+			Children: []*navtree.NavLink{},
 		})
 	}
 

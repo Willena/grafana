@@ -9,7 +9,7 @@ import { Button, Card, Modal, RadioButtonGroup, useStyles2 } from '@grafana/ui';
 import { TestTemplateAlert } from 'app/plugins/datasource/alertmanager/types';
 
 import { KeyValueField } from '../../../api/templateApi';
-import AnnotationsField from '../../rule-editor/AnnotationsField';
+import AnnotationsStep from '../../rule-editor/AnnotationsStep';
 import LabelsField from '../../rule-editor/LabelsField';
 
 interface Props {
@@ -85,7 +85,7 @@ export const GenerateAlertDataModal = ({ isOpen, onDismiss, onAccept }: Props) =
   ];
 
   return (
-    <Modal onDismiss={onDismiss} isOpen={isOpen} title={'Add alert data'}>
+    <Modal onDismiss={onDismiss} isOpen={isOpen} title={'Add custom alerts'}>
       <FormProvider {...formMethods}>
         <form
           onSubmit={(e) => {
@@ -99,7 +99,7 @@ export const GenerateAlertDataModal = ({ isOpen, onDismiss, onAccept }: Props) =
             <Card>
               <Stack direction="column" gap={1}>
                 <div className={styles.section}>
-                  <AnnotationsField />
+                  <AnnotationsStep />
                 </div>
                 <div className={styles.section}>
                   <LabelsField />

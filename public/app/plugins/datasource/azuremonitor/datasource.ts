@@ -10,8 +10,7 @@ import {
   LoadingState,
   ScopedVars,
 } from '@grafana/data';
-import { DataSourceWithBackend } from '@grafana/runtime';
-import { getTemplateSrv, TemplateSrv } from 'app/features/templating/template_srv';
+import { DataSourceWithBackend, getTemplateSrv, TemplateSrv } from '@grafana/runtime';
 
 import AzureLogAnalyticsDatasource from './azure_log_analytics/azure_log_analytics_datasource';
 import AzureMonitorDatasource from './azure_monitor/azure_monitor_datasource';
@@ -137,10 +136,6 @@ export default class Datasource extends DataSourceWithBackend<AzureMonitorQuery,
     }
 
     return !!subQuery && this.templateSrv.containsTemplate(subQuery);
-  }
-
-  async annotationQuery(options: any) {
-    return this.azureLogAnalyticsDatasource.annotationQuery(options);
   }
 
   /* Azure Monitor REST API methods */

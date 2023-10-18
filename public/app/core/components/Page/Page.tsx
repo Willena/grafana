@@ -3,6 +3,7 @@ import { css, cx } from '@emotion/css';
 import React, { useLayoutEffect } from 'react';
 
 import { GrafanaTheme2, PageLayoutType } from '@grafana/data';
+import { config } from '@grafana/runtime';
 import { CustomScrollbar, useStyles2 } from '@grafana/ui';
 import { useGrafana } from 'app/core/context/GrafanaContext';
 
@@ -18,13 +19,13 @@ export const Page: PageType = ({
   navModel: oldNavProp,
   pageNav,
   renderTitle,
+  onEditTitle,
   actions,
   subTitle,
   children,
   className,
   info,
   layout = PageLayoutType.Standard,
-  toolbar,
   scrollTop,
   scrollRef,
   ...otherProps
@@ -38,7 +39,7 @@ export const Page: PageType = ({
   const pageHeaderNav = pageNav ?? navModel?.node;
 
   // We use useLayoutEffect here to make sure that the chrome is updated before the page is rendered
-  // This prevents flickering sectionNav when going from dashbaord to settings for example
+  // This prevents flickering sectionNav when going from dashboard to settings for example
   useLayoutEffect(() => {
     if (navModel) {
       chrome.update({
@@ -57,6 +58,7 @@ export const Page: PageType = ({
             {pageHeaderNav && (
               <PageHeader
                 actions={actions}
+                onEditTitle={onEditTitle}
                 navItem={pageHeaderNav}
                 renderTitle={renderTitle}
                 info={info}
@@ -70,18 +72,10 @@ export const Page: PageType = ({
       )}
       {layout === PageLayoutType.Canvas && (
         <CustomScrollbar autoHeightMin={'100%'} scrollTop={scrollTop} scrollRefCallback={scrollRef}>
-          <div className={styles.canvasContent}>
-            {toolbar}
-            {children}
-          </div>
+          <div className={styles.canvasContent}>{children}</div>
         </CustomScrollbar>
       )}
-      {layout === PageLayoutType.Custom && (
-        <>
-          {toolbar}
-          {children}
-        </>
-      )}
+      {layout === PageLayoutType.Custom && children}
     </div>
   );
 };
@@ -105,7 +99,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     pageInner: css({
       label: 'page-inner',
       padding: theme.spacing(2),
-      borderRadius: theme.shape.borderRadius(1),
+      borderRadius: theme.shape.radius.default,
       border: `1px solid ${theme.colors.border.weak}`,
       borderBottom: 'none',
       background: theme.colors.background.primary,
@@ -115,7 +109,7 @@ const getStyles = (theme: GrafanaTheme2) => {
       margin: theme.spacing(0, 0, 0, 0),
 
       [theme.breakpoints.up('md')]: {
-        margin: theme.spacing(2, 2, 0, 1),
+        margin: theme.spacing(2, 2, 0, config.featureToggles.dockedMegaMenu ? 2 : 1),
         padding: theme.spacing(3),
       },
     }),

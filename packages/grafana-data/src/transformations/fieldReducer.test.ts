@@ -1,8 +1,7 @@
 import { difference } from 'lodash';
 
-import { MutableDataFrame } from '../dataframe/MutableDataFrame';
-import { guessFieldTypeFromValue } from '../dataframe/processDataFrame';
-import { Field, FieldType } from '../types/index';
+import { createDataFrame, guessFieldTypeFromValue } from '../dataframe/processDataFrame';
+import { Field, FieldType, NullValueMode } from '../types/index';
 
 import { fieldReducers, ReducerID, reduceField } from './fieldReducer';
 
@@ -24,7 +23,7 @@ function createField<T>(name: string, values?: T[], type?: FieldType): Field<T> 
 }
 
 describe('Stats Calculators', () => {
-  const basicTable = new MutableDataFrame({
+  const basicTable = createDataFrame({
     fields: [
       { name: 'a', values: [10, 20] },
       { name: 'b', values: [20, 30] },
@@ -171,5 +170,24 @@ describe('Stats Calculators', () => {
         }
       }
     }
+  });
+
+  it('count should ignoreNulls by default', () => {
+    const someNulls = createField('x', [1, null, null, 1]);
+    expect(reduce(someNulls, ReducerID.count)).toEqual(2);
+  });
+
+  it('count should use fieldConfig nullValueMode.Ignore and not count nulls', () => {
+    const someNulls = createField('x', [1, null, null, 1]);
+    someNulls.config.nullValueMode = NullValueMode.Ignore;
+
+    expect(reduce(someNulls, ReducerID.count)).toEqual(2);
+  });
+
+  it('count should use fieldConfig nullValueMode.Null and count nulls', () => {
+    const someNulls = createField('x', [1, null, null, 1]);
+    someNulls.config.nullValueMode = NullValueMode.Null;
+
+    expect(reduce(someNulls, ReducerID.count)).toEqual(4);
   });
 });

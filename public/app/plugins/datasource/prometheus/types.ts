@@ -1,23 +1,24 @@
 import { DataSourceJsonData, QueryResultMeta, ScopedVars } from '@grafana/data';
 import { DataQuery } from '@grafana/schema';
 
-import { PromApplication } from '../../../types/unified-alerting-dto';
-
 import { Prometheus as GenPromQuery } from './dataquery.gen';
-import { QueryEditorMode } from './querybuilder/shared/types';
+import { QueryBuilderLabelFilter, QueryEditorMode } from './querybuilder/shared/types';
 
 export interface PromQuery extends GenPromQuery, DataQuery {
   /**
    * Timezone offset to align start & end time on backend
    */
   utcOffsetSec?: number;
-  legendFormat?: string;
   valueWithRefId?: boolean;
   showingGraph?: boolean;
   showingTable?: boolean;
   hinting?: boolean;
   interval?: string;
-  intervalFactor?: number;
+  // store the metrics explorer additional settings
+  useBackend?: boolean;
+  disableTextWrap?: boolean;
+  fullMetaSearch?: boolean;
+  includeNullMetadata?: boolean;
 }
 
 export enum PrometheusCacheLevel {
@@ -26,6 +27,14 @@ export enum PrometheusCacheLevel {
   High = 'High',
   None = 'None',
 }
+
+export enum PromApplication {
+  Cortex = 'Cortex',
+  Mimir = 'Mimir',
+  Prometheus = 'Prometheus',
+  Thanos = 'Thanos',
+}
+
 export interface PromOptions extends DataSourceJsonData {
   timeInterval?: string;
   queryTimeout?: string;
@@ -40,6 +49,9 @@ export interface PromOptions extends DataSourceJsonData {
   defaultEditor?: QueryEditorMode;
   incrementalQuerying?: boolean;
   incrementalQueryOverlapWindow?: string;
+  disableRecordingRules?: boolean;
+  sigV4Auth?: boolean;
+  oauthPassThru?: boolean;
 }
 
 export type ExemplarTraceIdDestination = {
@@ -152,12 +164,20 @@ export interface TransformOptions {
   meta: QueryResultMeta;
 }
 
-export interface PromLabelQueryResponse {
+export interface PromBuildInfoResponse {
   data: {
-    status: string;
-    data: string[];
+    application?: string;
+    version: string;
+    revision: string;
+    features?: {
+      ruler_config_api?: 'true' | 'false';
+      alertmanager_config_api?: 'true' | 'false';
+      query_sharding?: 'true' | 'false';
+      federated_rules?: 'true' | 'false';
+    };
+    [key: string]: unknown;
   };
-  cancelled?: boolean;
+  status: 'success';
 }
 
 /**
@@ -177,6 +197,7 @@ export enum PromVariableQueryType {
   MetricNames,
   VarQueryResult,
   SeriesQuery,
+  ClassicQuery,
 }
 
 export interface PromVariableQuery extends DataQuery {
@@ -187,6 +208,9 @@ export interface PromVariableQuery extends DataQuery {
   metric?: string;
   varQuery?: string;
   seriesQuery?: string;
+  labelFilters?: QueryBuilderLabelFilter[];
+  match?: string;
+  classicQuery?: string;
 }
 
 export type StandardPromVariableQuery = {

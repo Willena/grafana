@@ -1,6 +1,12 @@
-import { PluginExtensionLinkConfig, PluginExtensionTypes } from '@grafana/data';
+import { render, screen } from '@testing-library/react';
+import React from 'react';
+import { type Unsubscribable } from 'rxjs';
 
-import { deepFreeze, isPluginExtensionLinkConfig, handleErrorsInFn } from './utils';
+import { type PluginExtensionLinkConfig, PluginExtensionTypes } from '@grafana/data';
+import appEvents from 'app/core/app_events';
+import { ShowModalReactEvent } from 'app/types/events';
+
+import { deepFreeze, isPluginExtensionLinkConfig, handleErrorsInFn, getReadOnlyProxy, getEventHelpers } from './utils';
 
 describe('Plugin Extensions / Utils', () => {
   describe('deepFreeze()', () => {
@@ -217,6 +223,178 @@ describe('Plugin Extensions / Utils', () => {
         // Logs the errors
         expect(console.warn).toHaveBeenCalledWith('Error: TEST');
       }).not.toThrow();
+    });
+  });
+
+  describe('getReadOnlyProxy()', () => {
+    it('should not be possible to modify values in proxied object', () => {
+      const proxy = getReadOnlyProxy({ a: 'a' });
+
+      expect(() => {
+        proxy.a = 'b';
+      }).toThrowError(TypeError);
+    });
+
+    it('should not be possible to modify values in proxied array', () => {
+      const proxy = getReadOnlyProxy([1, 2, 3]);
+
+      expect(() => {
+        proxy[0] = 2;
+      }).toThrowError(TypeError);
+    });
+
+    it('should not be possible to modify nested objects in proxied object', () => {
+      const proxy = getReadOnlyProxy({
+        a: {
+          c: 'c',
+        },
+        b: 'b',
+      });
+
+      expect(() => {
+        proxy.a.c = 'testing';
+      }).toThrowError(TypeError);
+    });
+
+    it('should not be possible to modify nested arrays in proxied object', () => {
+      const proxy = getReadOnlyProxy({
+        a: {
+          c: ['c', 'd'],
+        },
+        b: 'b',
+      });
+
+      expect(() => {
+        proxy.a.c[0] = 'testing';
+      }).toThrowError(TypeError);
+    });
+
+    it('should be possible to modify source object', () => {
+      const source = { a: 'b' };
+
+      getReadOnlyProxy(source);
+      source.a = 'c';
+
+      expect(source.a).toBe('c');
+    });
+
+    it('should be possible to modify source array', () => {
+      const source = ['a', 'b'];
+
+      getReadOnlyProxy(source);
+      source[0] = 'c';
+
+      expect(source[0]).toBe('c');
+    });
+
+    it('should be possible to modify nedsted objects in source object', () => {
+      const source = { a: { b: 'c' } };
+
+      getReadOnlyProxy(source);
+      source.a.b = 'd';
+
+      expect(source.a.b).toBe('d');
+    });
+
+    it('should be possible to modify nedsted arrays in source object', () => {
+      const source = { a: { b: ['c', 'd'] } };
+
+      getReadOnlyProxy(source);
+      source.a.b[0] = 'd';
+
+      expect(source.a.b[0]).toBe('d');
+    });
+
+    it('should be possible to call functions in proxied object', () => {
+      const proxy = getReadOnlyProxy({
+        a: () => 'testing',
+      });
+
+      expect(proxy.a()).toBe('testing');
+    });
+  });
+
+  describe('getEventHelpers', () => {
+    describe('openModal', () => {
+      let renderModalSubscription: Unsubscribable | undefined;
+
+      beforeAll(() => {
+        renderModalSubscription = appEvents.subscribe(ShowModalReactEvent, (event) => {
+          const { payload } = event;
+          const Modal = payload.component;
+          render(<Modal />);
+        });
+      });
+
+      afterAll(() => {
+        renderModalSubscription?.unsubscribe();
+      });
+
+      it('should open modal with provided title and body', async () => {
+        const { openModal } = getEventHelpers();
+
+        openModal({
+          title: 'Title in modal',
+          body: () => <div>Text in body</div>,
+        });
+
+        expect(screen.getByRole('dialog')).toBeVisible();
+        expect(screen.getByRole('heading')).toHaveTextContent('Title in modal');
+        expect(screen.getByText('Text in body')).toBeVisible();
+      });
+
+      it('should open modal with default width if not specified', async () => {
+        const { openModal } = getEventHelpers();
+
+        openModal({
+          title: 'Title in modal',
+          body: () => <div>Text in body</div>,
+        });
+
+        const modal = screen.getByRole('dialog');
+        const style = window.getComputedStyle(modal);
+
+        expect(style.width).toBe('750px');
+        expect(style.height).toBe('');
+      });
+
+      it('should open modal with specified width', async () => {
+        const { openModal } = getEventHelpers();
+
+        openModal({
+          title: 'Title in modal',
+          body: () => <div>Text in body</div>,
+          width: '70%',
+        });
+
+        const modal = screen.getByRole('dialog');
+        const style = window.getComputedStyle(modal);
+
+        expect(style.width).toBe('70%');
+      });
+
+      it('should open modal with specified height', async () => {
+        const { openModal } = getEventHelpers();
+
+        openModal({
+          title: 'Title in modal',
+          body: () => <div>Text in body</div>,
+          height: 600,
+        });
+
+        const modal = screen.getByRole('dialog');
+        const style = window.getComputedStyle(modal);
+
+        expect(style.height).toBe('600px');
+      });
+    });
+
+    describe('context', () => {
+      it('should return same object as passed to getEventHelpers', () => {
+        const source = {};
+        const { context } = getEventHelpers(source);
+        expect(context).toBe(source);
+      });
     });
   });
 });

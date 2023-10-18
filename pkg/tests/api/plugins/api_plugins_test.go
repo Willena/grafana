@@ -41,6 +41,12 @@ func TestIntegrationPlugins(t *testing.T) {
 		PluginAdminEnabled: true,
 	})
 
+	origBuildVersion := setting.BuildVersion
+	setting.BuildVersion = "0.0.0-test"
+	t.Cleanup(func() {
+		setting.BuildVersion = origBuildVersion
+	})
+
 	grafanaListedAddr, store := testinfra.StartGrafana(t, dir, cfgPath)
 
 	type testCase struct {
@@ -139,14 +145,14 @@ func TestIntegrationPluginAssets(t *testing.T) {
 			{
 				desc:            "should return no-cache settings for Dev env",
 				env:             setting.Dev,
-				url:             "http://%s/public/plugins/testdata/img/testdata.svg",
+				url:             "http://%s/public/plugins/grafana-testdata-datasource/img/testdata.svg",
 				expStatus:       http.StatusOK,
 				expCacheControl: "max-age=0, must-revalidate, no-cache",
 			},
 			{
 				desc:            "should return cache settings for Prod env",
 				env:             setting.Prod,
-				url:             "http://%s/public/plugins/testdata/img/testdata.svg",
+				url:             "http://%s/public/plugins/grafana-testdata-datasource/img/testdata.svg",
 				expStatus:       http.StatusOK,
 				expCacheControl: "public, max-age=3600",
 			},

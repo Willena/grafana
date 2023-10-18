@@ -52,11 +52,8 @@ const SupportBundlesUnconnected = ({ supportBundles, isLoading, loadBundles, rem
     }
   });
 
-  const hasAccess = contextSrv.hasAccess(AccessControlAction.ActionSupportBundlesCreate, contextSrv.isGrafanaAdmin);
-  const hasDeleteAccess = contextSrv.hasAccess(
-    AccessControlAction.ActionSupportBundlesDelete,
-    contextSrv.isGrafanaAdmin
-  );
+  const hasAccess = contextSrv.hasPermission(AccessControlAction.ActionSupportBundlesCreate);
+  const hasDeleteAccess = contextSrv.hasPermission(AccessControlAction.ActionSupportBundlesDelete);
 
   const actions = hasAccess ? NewBundleButton : undefined;
 
@@ -93,7 +90,12 @@ const SupportBundlesUnconnected = ({ supportBundles, isLoading, loadBundles, rem
                 </th>
                 <th>
                   {hasDeleteAccess && (
-                    <IconButton onClick={() => removeBundle(bundle.uid)} name="trash-alt" variant="destructive" />
+                    <IconButton
+                      onClick={() => removeBundle(bundle.uid)}
+                      name="trash-alt"
+                      variant="destructive"
+                      tooltip="Remove bundle"
+                    />
                   )}
                 </th>
               </tr>

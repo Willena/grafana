@@ -2,7 +2,7 @@ import { useObservable } from 'react-use';
 import { BehaviorSubject } from 'rxjs';
 
 import { AppEvents, NavModel, NavModelItem, PageLayoutType, UrlQueryValue } from '@grafana/data';
-import { locationService, reportInteraction } from '@grafana/runtime';
+import { config, locationService, reportInteraction } from '@grafana/runtime';
 import appEvents from 'app/core/app_events';
 import { t } from 'app/core/internationalization';
 import store from 'app/core/store';
@@ -17,10 +17,12 @@ export interface AppChromeState {
   pageNav?: NavModelItem;
   actions?: React.ReactNode;
   searchBarHidden?: boolean;
-  megaMenuOpen?: boolean;
+  megaMenu: 'open' | 'closed' | 'docked';
   kioskMode: KioskMode | null;
   layout: PageLayoutType;
 }
+
+const DOCKED_LOCAL_STORAGE_KEY = 'grafana.navigation.docked';
 
 export class AppChromeService {
   searchBarStorageKey = 'SearchBar_Hidden';
@@ -31,18 +33,20 @@ export class AppChromeService {
     chromeless: true, // start out hidden to not flash it on pages without chrome
     sectionNav: { node: { text: t('nav.home.title', 'Home') }, main: { text: '' } },
     searchBarHidden: store.getBool(this.searchBarStorageKey, false),
+    megaMenu:
+      config.featureToggles.dockedMegaMenu && store.getBool(DOCKED_LOCAL_STORAGE_KEY, false) ? 'docked' : 'closed',
     kioskMode: null,
     layout: PageLayoutType.Canvas,
   });
 
-  setMatchedRoute(route: RouteDescriptor) {
+  public setMatchedRoute(route: RouteDescriptor) {
     if (this.currentRoute !== route) {
       this.currentRoute = route;
       this.routeChangeHandled = false;
     }
   }
 
-  update(update: Partial<AppChromeState>) {
+  public update(update: Partial<AppChromeState>) {
     const current = this.state.getValue();
     const newState: AppChromeState = {
       ...current,
@@ -68,7 +72,7 @@ export class AppChromeService {
     }
   }
 
-  ignoreStateUpdate(newState: AppChromeState, current: AppChromeState) {
+  private ignoreStateUpdate(newState: AppChromeState, current: AppChromeState) {
     if (isShallowEqual(newState, current)) {
       return true;
     }
@@ -88,39 +92,45 @@ export class AppChromeService {
     return false;
   }
 
-  useState() {
+  public useState() {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     return useObservable(this.state, this.state.getValue());
   }
 
-  onToggleMegaMenu = () => {
-    const isOpen = !this.state.getValue().megaMenuOpen;
-    reportInteraction('grafana_toggle_menu_clicked', { action: isOpen ? 'open' : 'close' });
-    this.update({ megaMenuOpen: isOpen });
+  public setMegaMenu = (newMegaMenuState: AppChromeState['megaMenu']) => {
+    if (config.featureToggles.dockedMegaMenu) {
+      store.set(DOCKED_LOCAL_STORAGE_KEY, newMegaMenuState === 'docked');
+      reportInteraction('grafana_mega_menu_state', { state: newMegaMenuState });
+    } else {
+      reportInteraction('grafana_toggle_menu_clicked', { action: newMegaMenuState === 'open' ? 'open' : 'close' });
+    }
+    this.update({ megaMenu: newMegaMenuState });
   };
 
-  setMegaMenu = (megaMenuOpen: boolean) => {
-    this.update({ megaMenuOpen });
+  public onToggleSearchBar = () => {
+    const { searchBarHidden, kioskMode } = this.state.getValue();
+    const newSearchBarHidden = !searchBarHidden;
+    store.set(this.searchBarStorageKey, newSearchBarHidden);
+
+    if (kioskMode) {
+      locationService.partial({ kiosk: null });
+    }
+
+    this.update({ searchBarHidden: newSearchBarHidden, kioskMode: null });
   };
 
-  onToggleSearchBar = () => {
-    const searchBarHidden = !this.state.getValue().searchBarHidden;
-    store.set(this.searchBarStorageKey, searchBarHidden);
-    this.update({ searchBarHidden });
-  };
-
-  onToggleKioskMode = () => {
+  public onToggleKioskMode = () => {
     const nextMode = this.getNextKioskMode();
     this.update({ kioskMode: nextMode });
     locationService.partial({ kiosk: this.getKioskUrlValue(nextMode) });
   };
 
-  exitKioskMode() {
+  public exitKioskMode() {
     this.update({ kioskMode: undefined });
     locationService.partial({ kiosk: null });
   }
 
-  setKioskModeFromUrl(kiosk: UrlQueryValue) {
+  public setKioskModeFromUrl(kiosk: UrlQueryValue) {
     switch (kiosk) {
       case 'tv':
         this.update({ kioskMode: KioskMode.TV });
@@ -131,7 +141,7 @@ export class AppChromeService {
     }
   }
 
-  getKioskUrlValue(mode: KioskMode | null) {
+  public getKioskUrlValue(mode: KioskMode | null) {
     switch (mode) {
       case KioskMode.TV:
         return 'tv';
@@ -159,9 +169,9 @@ export class AppChromeService {
 }
 
 /**
- * Checks if text, url and active child url are the same
+ * Checks if text, url, active child url and parent are the same
  **/
-function navItemsAreTheSame(a: NavModelItem | undefined, b: NavModelItem | undefined) {
+function navItemsAreTheSame(a: NavModelItem | undefined, b: NavModelItem | undefined): boolean {
   if (a === b) {
     return true;
   }
@@ -169,5 +179,10 @@ function navItemsAreTheSame(a: NavModelItem | undefined, b: NavModelItem | undef
   const aActiveChild = a?.children?.find((child) => child.active);
   const bActiveChild = b?.children?.find((child) => child.active);
 
-  return a?.text === b?.text && a?.url === b?.url && aActiveChild?.url === bActiveChild?.url;
+  return (
+    a?.text === b?.text &&
+    a?.url === b?.url &&
+    aActiveChild?.url === bActiveChild?.url &&
+    navItemsAreTheSame(a?.parentItem, b?.parentItem)
+  );
 }

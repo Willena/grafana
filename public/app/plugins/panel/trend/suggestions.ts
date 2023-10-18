@@ -1,8 +1,8 @@
 import { VisualizationSuggestionsBuilder } from '@grafana/data';
-import { GraphDrawStyle, GraphFieldConfig } from '@grafana/schema';
+import { GraphDrawStyle, GraphFieldConfig, LegendDisplayMode } from '@grafana/schema';
 import { SuggestionName } from 'app/types/suggestions';
 
-import { PanelOptions } from './panelcfg.gen';
+import { Options } from './panelcfg.gen';
 
 export class TrendSuggestionsSupplier {
   getSuggestionsForData(builder: VisualizationSuggestionsBuilder) {
@@ -13,11 +13,16 @@ export class TrendSuggestionsSupplier {
     }
 
     // Super basic
-    const list = builder.getListAppender<PanelOptions, GraphFieldConfig>({
+    const list = builder.getListAppender<Options, GraphFieldConfig>({
       name: SuggestionName.LineChart,
       pluginId: 'trend',
       options: {
-        legend: {} as any,
+        legend: {
+          calcs: [],
+          displayMode: LegendDisplayMode.Hidden,
+          placement: 'right',
+          showLegend: false,
+        },
       },
       fieldConfig: {
         defaults: {
@@ -27,8 +32,6 @@ export class TrendSuggestionsSupplier {
       },
       cardOptions: {
         previewModifier: (s) => {
-          s.options!.legend.showLegend = false;
-
           if (s.fieldConfig?.defaults.custom?.drawStyle !== GraphDrawStyle.Bars) {
             s.fieldConfig!.defaults.custom!.lineWidth = Math.max(s.fieldConfig!.defaults.custom!.lineWidth ?? 1, 2);
           }

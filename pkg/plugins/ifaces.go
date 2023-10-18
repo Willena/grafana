@@ -10,14 +10,6 @@ import (
 	"github.com/grafana/grafana/pkg/plugins/backendplugin"
 )
 
-// Store is the publicly accessible storage for plugins.
-type Store interface {
-	// Plugin finds a plugin by its ID.
-	Plugin(ctx context.Context, pluginID string) (PluginDTO, bool)
-	// Plugins returns plugins by their requested type.
-	Plugins(ctx context.Context, pluginTypes ...Type) []PluginDTO
-}
-
 type Installer interface {
 	// Add adds a new plugin.
 	Add(ctx context.Context, pluginID, version string, opts CompatOpts) error
@@ -42,9 +34,30 @@ type File struct {
 }
 
 type CompatOpts struct {
-	GrafanaVersion string
-	OS             string
-	Arch           string
+	grafanaVersion string
+
+	os   string
+	arch string
+}
+
+func (co CompatOpts) GrafanaVersion() string {
+	return co.grafanaVersion
+}
+
+func (co CompatOpts) OS() string {
+	return co.os
+}
+
+func (co CompatOpts) Arch() string {
+	return co.arch
+}
+
+func NewCompatOpts(grafanaVersion, os, arch string) CompatOpts {
+	return CompatOpts{grafanaVersion: grafanaVersion, arch: arch, os: os}
+}
+
+func NewSystemCompatOpts(os, arch string) CompatOpts {
+	return CompatOpts{arch: arch, os: os}
 }
 
 type UpdateInfo struct {
@@ -97,11 +110,11 @@ type SecretsPluginManager interface {
 }
 
 type StaticRouteResolver interface {
-	Routes() []*StaticRoute
+	Routes(ctx context.Context) []*StaticRoute
 }
 
 type ErrorResolver interface {
-	PluginErrors() []*Error
+	PluginErrors(ctx context.Context) []*Error
 }
 
 type PluginLoaderAuthorizer interface {
@@ -143,6 +156,7 @@ func (fn ClientMiddlewareFunc) CreateClientMiddleware(next Client) Client {
 
 type FeatureToggles interface {
 	IsEnabled(flag string) bool
+	GetEnabled(ctx context.Context) map[string]bool
 }
 
 type SignatureCalculator interface {
@@ -151,10 +165,10 @@ type SignatureCalculator interface {
 
 type KeyStore interface {
 	Get(ctx context.Context, key string) (string, bool, error)
-	Set(ctx context.Context, key string, value string) error
-	Del(ctx context.Context, key string) error
+	Set(ctx context.Context, key string, value any) error
+	Delete(ctx context.Context, key string) error
 	ListKeys(ctx context.Context) ([]string, error)
-	GetLastUpdated(ctx context.Context) (*time.Time, error)
+	GetLastUpdated(ctx context.Context) (time.Time, error)
 	SetLastUpdated(ctx context.Context) error
 }
 

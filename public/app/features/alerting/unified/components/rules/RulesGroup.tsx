@@ -19,6 +19,8 @@ import { makeFolderLink, makeFolderSettingsLink } from '../../utils/misc';
 import { isFederatedRuleGroup, isGrafanaRulerRule } from '../../utils/rules';
 import { CollapseToggle } from '../CollapseToggle';
 import { RuleLocation } from '../RuleLocation';
+import { GrafanaRuleFolderExporter } from '../export/GrafanaRuleFolderExporter';
+import { GrafanaRuleGroupExporter } from '../export/GrafanaRuleGroupExporter';
 
 import { ActionIcon } from './ActionIcon';
 import { EditCloudGroupModal } from './EditRuleGroupModal';
@@ -43,6 +45,7 @@ export const RulesGroup = React.memo(({ group, namespace, expandAll, viewMode }:
   const [isEditingGroup, setIsEditingGroup] = useState(false);
   const [isDeletingGroup, setIsDeletingGroup] = useState(false);
   const [isReorderingGroup, setIsReorderingGroup] = useState(false);
+  const [isExporting, setIsExporting] = useState<'group' | 'folder' | undefined>(undefined);
   const [isCollapsed, setIsCollapsed] = useState(!expandAll);
 
   const { canEditRules } = useRulesAccess();
@@ -123,19 +126,45 @@ export const RulesGroup = React.memo(({ group, namespace, expandAll, viewMode }:
               target="__blank"
             />
           );
+
+          if (folder?.canAdmin) {
+            actionIcons.push(
+              <ActionIcon
+                aria-label="manage permissions"
+                key="manage-perms"
+                icon="lock"
+                tooltip="manage permissions"
+                to={baseUrl + '/permissions'}
+                target="__blank"
+              />
+            );
+          }
         }
       }
-      if (folder?.canAdmin && isListView) {
-        actionIcons.push(
-          <ActionIcon
-            aria-label="manage permissions"
-            key="manage-perms"
-            icon="lock"
-            tooltip="manage permissions"
-            to={baseUrl + '/permissions'}
-            target="__blank"
-          />
-        );
+      if (folder) {
+        if (isListView) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="export rule folder"
+              data-testid="export-folder"
+              key="export-folder"
+              icon="download-alt"
+              tooltip="Export rules folder"
+              onClick={() => setIsExporting('folder')}
+            />
+          );
+        } else if (isGroupView) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="export rule group"
+              data-testid="export-group"
+              key="export-group"
+              icon="download-alt"
+              tooltip="Export rule group"
+              onClick={() => setIsExporting('group')}
+            />
+          );
+        }
       }
     }
   } else if (canEditRules(rulesSource.name) && hasRuler(rulesSource)) {
@@ -261,17 +290,27 @@ export const RulesGroup = React.memo(({ group, namespace, expandAll, viewMode }:
         title="Delete group"
         body={
           <div>
-            Deleting this group will permanently remove the group
-            <br />
-            and {group.rules.length} alert {pluralize('rule', group.rules.length)} belonging to it.
-            <br />
-            Are you sure you want to delete this group?
+            <p>
+              Deleting &quot;<strong>{group.name}</strong>&quot; will permanently remove the group and{' '}
+              {group.rules.length} alert {pluralize('rule', group.rules.length)} belonging to it.
+            </p>
+            <p>Are you sure you want to delete this group?</p>
           </div>
         }
         onConfirm={deleteGroup}
         onDismiss={() => setIsDeletingGroup(false)}
         confirmText="Delete"
       />
+      {folder && isExporting === 'folder' && (
+        <GrafanaRuleFolderExporter folder={folder} onClose={() => setIsExporting(undefined)} />
+      )}
+      {folder && isExporting === 'group' && (
+        <GrafanaRuleGroupExporter
+          folderUid={folder.uid}
+          groupName={group.name}
+          onClose={() => setIsExporting(undefined)}
+        />
+      )}
     </div>
   );
 });
@@ -286,13 +325,16 @@ export const getStyles = (theme: GrafanaTheme2) => {
       flex-direction: row;
       align-items: center;
       padding: ${theme.spacing(1)} ${theme.spacing(1)} ${theme.spacing(1)} 0;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       border-bottom: 1px solid ${theme.colors.border.weak};
+
       &:hover {
         background-color: ${theme.components.table.rowHoverBackground};
       }
     `,
     headerStats: css`
+      flex-shrink: 0;
+
       span {
         vertical-align: middle;
       }
@@ -307,6 +349,10 @@ export const getStyles = (theme: GrafanaTheme2) => {
       margin-left: ${theme.spacing(1)};
       margin-bottom: 0;
       cursor: pointer;
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     `,
     spacer: css`
       flex: 1;
@@ -336,6 +382,8 @@ export const getStyles = (theme: GrafanaTheme2) => {
     actionIcons: css`
       width: 80px;
       align-items: center;
+
+      flex-shrink: 0;
     `,
     rulesTable: css`
       margin: ${theme.spacing(2, 0)};

@@ -1,4 +1,4 @@
-import { ArrayDataFrame, MutableDataFrame, toDataFrame } from '../dataframe';
+import { ArrayDataFrame, createDataFrame, toDataFrame } from '../dataframe';
 import { rangeUtil } from '../datetime';
 import { createTheme } from '../themes';
 import { FieldMatcherID } from '../transformations';
@@ -177,11 +177,11 @@ describe('applyFieldOverrides', () => {
   };
 
   describe('given multiple data frames', () => {
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [{ name: 'message', type: FieldType.string, values: [10, 20] }],
     });
-    const f1 = new MutableDataFrame({
+    const f1 = createDataFrame({
       name: 'B',
       fields: [{ name: 'info', type: FieldType.string, values: [10, 20] }],
     });
@@ -201,6 +201,51 @@ describe('applyFieldOverrides', () => {
       expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.frame).toBe(withOverrides[0]);
       expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.frameIndex).toBe(0);
       expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.field).toBe(withOverrides[0].fields[0]);
+    });
+  });
+
+  describe('given nested data frames', () => {
+    const f0Nested = createDataFrame({
+      name: 'nested',
+      fields: [{ name: 'info', type: FieldType.string, values: [10, 20] }],
+    });
+    const f0 = createDataFrame({
+      name: 'A',
+      fields: [
+        {
+          name: 'message',
+          type: FieldType.string,
+          values: [10, 20],
+        },
+        {
+          name: 'nested',
+          type: FieldType.nestedFrames,
+          values: [[f0Nested]],
+        },
+      ],
+    });
+
+    it('should add scopedVars to fields', () => {
+      const withOverrides = applyFieldOverrides({
+        data: [f0],
+        fieldConfig: {
+          defaults: {},
+          overrides: [],
+        },
+        replaceVariables: (value) => value,
+        theme: createTheme(),
+        fieldConfigRegistry: new FieldConfigOptionsRegistry(),
+      });
+
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.frame).toBe(
+        withOverrides[0].fields[1].values[0][0]
+      );
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.frameIndex).toBe(
+        0
+      );
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.field).toBe(
+        withOverrides[0].fields[1].values[0][0].fields[0]
+      );
     });
   });
 
@@ -283,6 +328,106 @@ describe('applyFieldOverrides', () => {
 
     // Don't Automatically pick the min value
     expect(range.min).toEqual(-20);
+  });
+
+  it('should calculate min/max per field when fieldMinMax is set', () => {
+    const df = toDataFrame([
+      { title: 'AAA', value: 100, value2: 1234 },
+      { title: 'BBB', value: -20, value2: null },
+      { title: 'CCC', value: 200, value2: 1000 },
+    ]);
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {
+        fieldMinMax: true,
+      },
+      overrides: [],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn1 = data.fields[1];
+    const range1 = valueColumn1.state!.range!;
+    expect(range1.max).toEqual(200);
+    expect(range1.min).toEqual(-20);
+
+    const valueColumn2 = data.fields[2];
+    const range2 = valueColumn2.state!.range!;
+    expect(range2.max).toEqual(1234);
+    expect(range2.min).toEqual(1000);
+  });
+
+  it('should calculate min/max locally for fields with fieldMinMax and globally for other fields', () => {
+    const df = toDataFrame({
+      fields: [
+        { name: 'first', type: FieldType.number, values: [-1, -2] },
+        { name: 'second', type: FieldType.number, values: [1, 2] },
+        { name: 'third', type: FieldType.number, values: [1000, 2000] },
+      ],
+    });
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {},
+      overrides: [
+        {
+          matcher: { id: FieldMatcherID.byName, options: 'second' },
+          properties: [{ id: 'fieldMinMax', value: true }],
+        },
+      ],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn0 = data.fields[0];
+    const range0 = valueColumn0.state!.range!;
+    expect(range0.max).toEqual(2000);
+    expect(range0.min).toEqual(-2);
+
+    const valueColumn1 = data.fields[1];
+    const range1 = valueColumn1.state!.range!;
+    expect(range1.max).toEqual(2);
+    expect(range1.min).toEqual(1);
+
+    const valueColumn2 = data.fields[2];
+    const range2 = valueColumn2.state!.range!;
+    expect(range2.max).toEqual(2000);
+    expect(range2.min).toEqual(-2);
+  });
+
+  it('should not calculate min if min is set', () => {
+    const df = toDataFrame({
+      fields: [{ name: 'first', type: FieldType.number, values: [-1, -2] }],
+    });
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {
+        min: 1,
+        fieldMinMax: true,
+      },
+      overrides: [],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn0 = data.fields[0];
+    const range0 = valueColumn0.state!.range!;
+    expect(range0.max).toEqual(-1);
+    expect(range0.min).toEqual(1);
   });
 
   it('getLinks should use applied field config', () => {
@@ -676,7 +821,7 @@ describe('getLinksSupplier', () => {
       getTimeRangeForUrl: () => ({ from: 'now-7d', to: 'now' }),
     });
 
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -712,7 +857,7 @@ describe('getLinksSupplier', () => {
     });
 
     const datasourceUid = '1234';
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -766,7 +911,7 @@ describe('getLinksSupplier', () => {
 
     const datasourceUid = '1234';
     const range = rangeUtil.relativeToTimeRange({ from: 600, to: 0 });
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -802,8 +947,8 @@ describe('getLinksSupplier', () => {
 
     const links = supplier({ valueRowIndex: 0 });
     const rangeStr = JSON.stringify({
-      from: range.from.toISOString(),
-      to: range.to.toISOString(),
+      from: range.from.valueOf().toString(),
+      to: range.to.valueOf().toString(),
     });
     const encodeURIParams = `{"range":${rangeStr},"datasource":"${datasourceUid}","queries":["12345"]}`;
     expect(links.length).toBe(1);
@@ -827,7 +972,7 @@ describe('getLinksSupplier', () => {
     it('handles link click handlers', () => {
       const onClickSpy = jest.fn();
       const replaceSpy = jest.fn();
-      const f0 = new MutableDataFrame({
+      const f0 = createDataFrame({
         name: 'A',
         fields: [
           {
@@ -838,7 +983,10 @@ describe('getLinksSupplier', () => {
               links: [
                 {
                   url: 'should not be ignored',
-                  onClick: onClickSpy,
+                  onClick: (evt) => {
+                    onClickSpy();
+                    evt.replaceVariables?.('${foo}');
+                  },
                   title: 'title to be interpolated',
                 },
                 {
@@ -850,8 +998,8 @@ describe('getLinksSupplier', () => {
           },
         ],
       });
-
-      const supplier = getLinksSupplier(f0, f0.fields[0], {}, replaceSpy);
+      const scopedVars = { foo: { text: 'bar', value: 'bar' } };
+      const supplier = getLinksSupplier(f0, f0.fields[0], scopedVars, replaceSpy);
       const links = supplier({});
 
       expect(links.length).toBe(2);
@@ -861,13 +1009,16 @@ describe('getLinksSupplier', () => {
       links[0].onClick!({});
 
       expect(onClickSpy).toBeCalledTimes(1);
+      expect(replaceSpy).toBeCalledTimes(4);
+      // check that onClick variable replacer has scoped vars bound to it
+      expect(replaceSpy.mock.calls[1][1]).toHaveProperty('foo', { text: 'bar', value: 'bar' });
     });
 
     it('handles links built dynamically', () => {
       const replaceSpy = jest.fn().mockReturnValue('url interpolated 10');
       const onBuildUrlSpy = jest.fn();
-
-      const f0 = new MutableDataFrame({
+      const scopedVars = { foo: { text: 'bar', value: 'bar' } };
+      const f0 = createDataFrame({
         name: 'A',
         fields: [
           {
@@ -878,8 +1029,9 @@ describe('getLinksSupplier', () => {
               links: [
                 {
                   url: 'should be ignored',
-                  onBuildUrl: () => {
+                  onBuildUrl: (evt) => {
                     onBuildUrlSpy();
+                    evt?.replaceVariables?.('${foo}');
                     return 'url to be interpolated';
                   },
                   title: 'title to be interpolated',
@@ -894,12 +1046,15 @@ describe('getLinksSupplier', () => {
         ],
       });
 
-      const supplier = getLinksSupplier(f0, f0.fields[0], {}, replaceSpy);
+      const supplier = getLinksSupplier(f0, f0.fields[0], scopedVars, replaceSpy);
       const links = supplier({});
 
       expect(onBuildUrlSpy).toBeCalledTimes(1);
       expect(links.length).toBe(2);
       expect(links[0].href).toEqual('url interpolated 10');
+      expect(replaceSpy).toBeCalledTimes(5);
+      // check that onBuildUrl variable replacer has scoped vars bound to it
+      expect(replaceSpy.mock.calls[1][1]).toHaveProperty('foo', { text: 'bar', value: 'bar' });
     });
   });
 });

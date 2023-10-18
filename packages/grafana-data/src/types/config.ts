@@ -47,18 +47,6 @@ export interface LicenseInfo {
 }
 
 /**
- * Describes Sentry integration config
- *
- * @public
- */
-export interface SentryConfig {
-  enabled: boolean;
-  dsn: string;
-  customEndpoint: string;
-  sampleRate: number;
-}
-
-/**
  * Describes GrafanaJavascriptAgentConfig integration config
  *
  * @public
@@ -76,6 +64,8 @@ export interface UnifiedAlertingConfig {
   minInterval: string;
   // will be undefined if alerStateHistory is not enabled
   alertStateHistoryBackend?: string;
+  // will be undefined if implementation is not "multiple"
+  alertStateHistoryPrimary?: string;
 }
 
 /** Supported OAuth services
@@ -157,7 +147,7 @@ export interface BootData {
  * @internal
  */
 export interface GrafanaConfig {
-  isPublicDashboardView: boolean;
+  publicDashboardAccessToken?: string;
   snapshotEnabled: boolean;
   datasources: { [str: string]: DataSourceInstanceSettings };
   panels: { [key: string]: PanelPluginMeta };
@@ -183,6 +173,7 @@ export interface GrafanaConfig {
   queryHistoryEnabled: boolean;
   helpEnabled: boolean;
   profileEnabled: boolean;
+  newsFeedEnabled: boolean;
   ldapEnabled: boolean;
   sigV4AuthEnabled: boolean;
   azureAuthEnabled: boolean;
@@ -190,6 +181,7 @@ export interface GrafanaConfig {
   autoAssignOrg: boolean;
   verifyEmailEnabled: boolean;
   oauth: OAuthSettings;
+  /** @deprecated always set to true. */
   rbacEnabled: boolean;
   disableUserSignUp: boolean;
   loginHint: string;
@@ -209,7 +201,6 @@ export interface GrafanaConfig {
   licenseInfo: LicenseInfo;
   http2Enabled: boolean;
   dateFormats?: SystemDateFormatSettings;
-  sentry: SentryConfig;
   grafanaJavascriptAgent: GrafanaJavascriptAgentConfig;
   customTheme?: any;
   geomapDefaultBaseLayer?: MapLayerOptions;
@@ -249,5 +240,5 @@ export interface AuthSettings {
   AzureADSkipOrgRoleSync?: boolean;
   GoogleSkipOrgRoleSync?: boolean;
   GenericOAuthSkipOrgRoleSync?: boolean;
-  DisableSyncLock?: boolean;
+  AuthProxyEnableLoginToken?: boolean;
 }

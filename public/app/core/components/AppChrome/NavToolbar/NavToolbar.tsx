@@ -14,6 +14,8 @@ import { TOP_BAR_LEVEL_HEIGHT } from '../types';
 
 import { NavToolbarSeparator } from './NavToolbarSeparator';
 
+export const TOGGLE_BUTTON_ID = 'mega-menu-toggle';
+
 export interface Props {
   onToggleSearchBar(): void;
   onToggleMegaMenu(): void;
@@ -41,6 +43,7 @@ export function NavToolbar({
     <div data-testid={Components.NavToolbar.container} className={styles.pageToolbar}>
       <div className={styles.menuButton}>
         <IconButton
+          id={TOGGLE_BUTTON_ID}
           name="bars"
           tooltip={t('navigation.toolbar.toggle-menu', 'Toggle menu')}
           tooltipPlacement="bottom"
@@ -48,7 +51,7 @@ export function NavToolbar({
           onClick={onToggleMegaMenu}
         />
       </div>
-      <Breadcrumbs breadcrumbs={breadcrumbs} className={styles.breadcrumbs} />
+      <Breadcrumbs breadcrumbs={breadcrumbs} className={styles.breadcrumbsWrapper} />
       <div className={styles.actions}>
         {actions}
         {actions && <NavToolbarSeparator />}
@@ -74,15 +77,18 @@ export function NavToolbar({
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
-    breadcrumbs: css({
-      maxWidth: '50%',
+    breadcrumbsWrapper: css({
+      display: 'flex',
+      overflow: 'hidden',
+      [theme.breakpoints.down('sm')]: {
+        minWidth: '50%',
+      },
     }),
     pageToolbar: css({
       height: TOP_BAR_LEVEL_HEIGHT,
       display: 'flex',
       padding: theme.spacing(0, 1, 0, 2),
       alignItems: 'center',
-      justifyContent: 'space-between',
     }),
     menuButton: css({
       display: 'flex',
@@ -90,6 +96,7 @@ const getStyles = (theme: GrafanaTheme2) => {
       marginRight: theme.spacing(1),
     }),
     actions: css({
+      label: 'NavToolbar-actions',
       display: 'flex',
       alignItems: 'center',
       flexWrap: 'nowrap',
@@ -98,6 +105,10 @@ const getStyles = (theme: GrafanaTheme2) => {
       flexGrow: 1,
       gap: theme.spacing(0.5),
       minWidth: 0,
+
+      '.body-drawer-open &': {
+        display: 'none',
+      },
     }),
   };
 };

@@ -1,15 +1,14 @@
-import { e2e } from '@grafana/e2e';
+import { e2e } from '../utils';
 
 const DASHBOARD_ID = 'c01bf42b-b783-4447-a304-8554cee1843b';
 const DATAGRID_CANVAS = 'data-grid-canvas';
 
-e2e.scenario({
-  describeName: 'Datagrid data changes',
-  itName: 'Tests changing data in the grid',
-  addScenarioDataSource: false,
-  addScenarioDashBoard: false,
-  skipScenario: false,
-  scenario: () => {
+describe('Datagrid data changes', () => {
+  beforeEach(() => {
+    e2e.flows.login(Cypress.env('USERNAME'), Cypress.env('PASSWORD'));
+  });
+
+  it('Tests changing data in the grid', () => {
     e2e.flows.openDashboard({ uid: DASHBOARD_ID, queryParams: { editPanel: 1 } });
 
     // Edit datagrid which triggers a snapshot query
@@ -17,7 +16,7 @@ e2e.scenario({
     cy.get('[data-testid="glide-cell-2-1"]').should('have.attr', 'aria-selected', 'true');
     cy.get('body').type('123{enter}', { delay: 500 });
 
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
 
     // Delete a cell
     cy.get('.dvn-scroller').click(200, 200);
@@ -57,7 +56,7 @@ e2e.scenario({
     cy.get('.dvn-scroller').click(20, 190, { waitForAnimations: true });
     cy.get('.dvn-scroller').click(20, 90, { shiftKey: true, waitForAnimations: true }); // with shift to select all rows between clicks
     cy.get('body').type('{del}');
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
     cy.get('[data-testid="glide-cell-1-4"]').should('have.text', '');
     cy.get('[data-testid="glide-cell-1-3"]').should('have.text', '');
     cy.get('[data-testid="glide-cell-1-2"]').should('have.text', '');
@@ -72,7 +71,7 @@ e2e.scenario({
     cy.get('.dvn-scroller').click(20, 90, { commandKey: true, waitForAnimations: true }); // with cmd to select only clicked rows
     cy.get('body').type('{del}');
 
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
 
     cy.get('[data-testid="glide-cell-1-1"]').should('have.text', '');
     cy.get('[data-testid="glide-cell-2-1"]').should('have.text', 0);
@@ -89,7 +88,7 @@ e2e.scenario({
     // Delete column through header dropdown menu
     cy.get('.dvn-scroller').click(250, 15); // click header dropdown
     cy.get('body').click(450, 420); // click delete column
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
     cy.get(`[data-testid="${DATAGRID_CANVAS}"] th`).should('have.length', 1);
 
     // Delete row through context menu
@@ -108,7 +107,7 @@ e2e.scenario({
     cy.get('.dvn-scroller').click(20, 90, { commandKey: true, waitForAnimations: true }); // with shift to select all rows between clicks
     cy.get('.dvn-scroller').rightclick(40, 90);
     cy.get('[aria-label="Context menu"]').click(10, 10);
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
     cy.get(`[data-testid="${DATAGRID_CANVAS}"] tbody tr`).should('have.length', 5); // there are 5 data rows + 1 for the add new row btns
 
     // Delete column through context menu
@@ -121,7 +120,7 @@ e2e.scenario({
 
     // Add a new column
     cy.get('body').click(350, 200).type('New Column{enter}');
-    cy.get('[aria-label="Confirm Modal Danger Button"]').click();
+    cy.get('[data-testid="data-testid Confirm Modal Danger Button"]').click();
     cy.get('body')
       .click(350, 230)
       .type('Value 1{enter}')
@@ -138,7 +137,7 @@ e2e.scenario({
     cy.get(`[data-testid="${DATAGRID_CANVAS}"] th`).contains('Renamed column');
 
     // Change column field type
-    cy.get('.dvn-scroller').click(250, 15);
+    cy.get('.dvn-scroller').click(310, 15);
     cy.get('[aria-label="Context menu"]').click(50, 50);
     cy.get('.dvn-scroller').click(200, 100);
     cy.get('body').type('Str Value{enter}');
@@ -155,5 +154,5 @@ e2e.scenario({
     cy.get('body').type('Val{enter}');
     cy.get(`[data-testid="${DATAGRID_CANVAS}"] tbody tr`).contains('Val');
     cy.get(`[data-testid="${DATAGRID_CANVAS}"] tbody tr`).should('have.length', 8);
-  },
+  });
 });

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"net/url"
 
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
@@ -8,20 +9,23 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/oam"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/models/resources"
 )
 
-type RequestContextFactoryFunc func(pluginCtx backend.PluginContext, region string) (reqCtx RequestContext, err error)
+type RequestContextFactoryFunc func(ctx context.Context, pluginCtx backend.PluginContext, region string) (reqCtx RequestContext, err error)
 
-type RouteHandlerFunc func(pluginCtx backend.PluginContext, reqContextFactory RequestContextFactoryFunc, parameters url.Values) ([]byte, *HttpError)
+type RouteHandlerFunc func(ctx context.Context, pluginCtx backend.PluginContext, reqContextFactory RequestContextFactoryFunc, parameters url.Values) ([]byte, *HttpError)
 
 type RequestContext struct {
 	MetricsClientProvider MetricsClientProvider
 	LogsAPIProvider       CloudWatchLogsAPIProvider
 	OAMAPIProvider        OAMAPIProvider
+	EC2APIProvider        EC2APIProvider
 	Settings              CloudWatchSettings
 	Features              featuremgmt.FeatureToggles
+	Logger                log.Logger
 }
 
 // Services
@@ -38,6 +42,10 @@ type LogGroupsProvider interface {
 
 type AccountsProvider interface {
 	GetAccountsForCurrentUserOrRole() ([]resources.ResourceResponse[resources.Account], error)
+}
+
+type RegionsAPIProvider interface {
+	GetRegions() ([]resources.ResourceResponse[resources.Region], error)
 }
 
 // Clients

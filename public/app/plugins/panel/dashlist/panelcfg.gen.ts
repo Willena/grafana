@@ -8,10 +8,12 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
-export const PanelCfgModelVersion = Object.freeze([0, 0]);
-
-export interface PanelOptions {
+export interface Options {
+  /**
+   * folderId is deprecated, and migrated to folderUid on panel init
+   */
   folderId?: number;
+  folderUID?: string;
   includeVars: boolean;
   keepTime: boolean;
   maxItems: number;
@@ -23,7 +25,7 @@ export interface PanelOptions {
   tags: Array<string>;
 }
 
-export const defaultPanelOptions: Partial<PanelOptions> = {
+export const defaultOptions: Partial<Options> = {
   includeVars: false,
   keepTime: false,
   maxItems: 10,

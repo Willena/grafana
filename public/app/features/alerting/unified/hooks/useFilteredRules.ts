@@ -1,5 +1,5 @@
 import uFuzzy from '@leeoniya/ufuzzy';
-import produce from 'immer';
+import { produce } from 'immer';
 import { compact, isEmpty } from 'lodash';
 import { useCallback, useEffect, useMemo } from 'react';
 
@@ -9,8 +9,9 @@ import { CombinedRuleGroup, CombinedRuleNamespace, Rule } from 'app/types/unifie
 import { isPromAlertingRuleState, PromRuleType, RulerGrafanaRuleDTO } from 'app/types/unified-alerting-dto';
 
 import { applySearchFilterToQuery, getSearchFilterFromQuery, RulesFilter } from '../search/rulesSearchParser';
-import { labelsMatchMatchers, matcherToMatcherField, parseMatcher, parseMatchers } from '../utils/alertmanager';
+import { labelsMatchMatchers, matcherToMatcherField, parseMatchers } from '../utils/alertmanager';
 import { isCloudRulesSource } from '../utils/datasource';
+import { parseMatcher } from '../utils/matchers';
 import { getRuleHealth, isAlertingRule, isGrafanaRulerRule, isPromRuleType } from '../utils/rules';
 
 import { calculateGroupTotals, calculateRuleFilteredTotals, calculateRuleTotals } from './useCombinedRuleNamespaces';
@@ -135,7 +136,7 @@ export const filterRules = (
   }
 
   // If a namespace and group have rules that match the rules filters then keep them.
-  return filteredNamespaces.reduce(reduceNamespaces(filterState), [] as CombinedRuleNamespace[]);
+  return filteredNamespaces.reduce<CombinedRuleNamespace[]>(reduceNamespaces(filterState), []);
 };
 
 const reduceNamespaces = (filterState: RulesFilter) => {
@@ -153,7 +154,7 @@ const reduceNamespaces = (filterState: RulesFilter) => {
       }
     }
 
-    filteredGroups = filteredGroups.reduce(reduceGroups(filterState), [] as CombinedRuleGroup[]);
+    filteredGroups = filteredGroups.reduce<CombinedRuleGroup[]>(reduceGroups(filterState), []);
 
     if (filteredGroups.length) {
       namespaceAcc.push({

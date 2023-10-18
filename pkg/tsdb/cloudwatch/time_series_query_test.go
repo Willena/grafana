@@ -50,7 +50,7 @@ func TestTimeSeriesQuery(t *testing.T) {
 					StatusCode: aws.String("Complete"), Id: aws.String("b"), Label: aws.String("NetworkIn"), Values: []*float64{aws.Float64(1.0)}, Timestamps: []*time.Time{&now},
 				}}}, nil)
 
-		im := datasource.NewInstanceManager(func(s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+		im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 			return DataSource{Settings: models.CloudWatchSettings{}}, nil
 		})
 
@@ -148,7 +148,7 @@ func Test_executeTimeSeriesQuery_getCWClient_is_called_once_per_region_and_GetMe
 		return &mockMetricClient
 	}
 
-	im := datasource.NewInstanceManager(func(s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		return DataSource{Settings: models.CloudWatchSettings{}}, nil
 	})
 
@@ -269,15 +269,15 @@ type queryDimensions struct {
 }
 
 type queryParameters struct {
-	MetricQueryType  dataquery.CloudWatchMetricsQueryMetricQueryType  `json:"metricQueryType"`
-	MetricEditorMode dataquery.CloudWatchMetricsQueryMetricEditorMode `json:"metricEditorMode"`
-	Dimensions       queryDimensions                                  `json:"dimensions"`
-	Expression       string                                           `json:"expression"`
-	Label            *string                                          `json:"label"`
-	Statistic        string                                           `json:"statistic"`
-	Period           string                                           `json:"period"`
-	MatchExact       bool                                             `json:"matchExact"`
-	MetricName       string                                           `json:"metricName"`
+	MetricQueryType  dataquery.MetricQueryType  `json:"metricQueryType"`
+	MetricEditorMode dataquery.MetricEditorMode `json:"metricEditorMode"`
+	Dimensions       queryDimensions            `json:"dimensions"`
+	Expression       string                     `json:"expression"`
+	Label            *string                    `json:"label"`
+	Statistic        string                     `json:"statistic"`
+	Period           string                     `json:"period"`
+	MatchExact       bool                       `json:"matchExact"`
+	MetricName       string                     `json:"metricName"`
 }
 
 var queryId = "query id"
@@ -286,11 +286,11 @@ func newTestQuery(t testing.TB, p queryParameters) json.RawMessage {
 	t.Helper()
 
 	tsq := struct {
-		Type             string                                           `json:"type"`
-		MetricQueryType  dataquery.CloudWatchMetricsQueryMetricQueryType  `json:"metricQueryType"`
-		MetricEditorMode dataquery.CloudWatchMetricsQueryMetricEditorMode `json:"metricEditorMode"`
-		Namespace        string                                           `json:"namespace"`
-		MetricName       string                                           `json:"metricName"`
+		Type             string                     `json:"type"`
+		MetricQueryType  dataquery.MetricQueryType  `json:"metricQueryType"`
+		MetricEditorMode dataquery.MetricEditorMode `json:"metricEditorMode"`
+		Namespace        string                     `json:"namespace"`
+		MetricName       string                     `json:"metricName"`
 		Dimensions       struct {
 			InstanceID []string `json:"InstanceId,omitempty"`
 		} `json:"dimensions"`
@@ -337,7 +337,7 @@ func Test_QueryData_timeSeriesQuery_GetMetricDataWithContext(t *testing.T) {
 		return &api
 	}
 
-	im := datasource.NewInstanceManager(func(s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		return DataSource{Settings: models.CloudWatchSettings{}}, nil
 	})
 
@@ -415,7 +415,11 @@ func Test_QueryData_response_data_frame_name_is_always_response_label(t *testing
 	t.Cleanup(func() {
 		NewCWClient = origNewCWClient
 	})
-	var api mocks.MetricsAPI
+
+	api := mocks.MetricsAPI{Metrics: []*cloudwatch.Metric{
+		{MetricName: aws.String(""), Dimensions: []*cloudwatch.Dimension{{Name: aws.String("InstanceId"), Value: aws.String("i-00645d91ed77d87ac")}}},
+	}}
+	api.On("ListMetricsPages").Return(nil)
 
 	NewCWClient = func(sess *session.Session) cloudwatchiface.CloudWatchAPI {
 		return &api
@@ -429,7 +433,7 @@ func Test_QueryData_response_data_frame_name_is_always_response_label(t *testing
 					Values: []*float64{aws.Float64(1.0)}, Timestamps: []*time.Time{{}}},
 			}}, nil)
 
-	im := datasource.NewInstanceManager(func(s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		return DataSource{Settings: models.CloudWatchSettings{}}, nil
 	})
 	executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
@@ -584,7 +588,7 @@ func TestTimeSeriesQuery_CrossAccountQuerying(t *testing.T) {
 	NewCWClient = func(sess *session.Session) cloudwatchiface.CloudWatchAPI {
 		return &api
 	}
-	im := datasource.NewInstanceManager(func(s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		return DataSource{Settings: models.CloudWatchSettings{}}, nil
 	})
 

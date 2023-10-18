@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	sdkhttpclient "github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
+	sdkproxy "github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/db"
@@ -20,10 +22,16 @@ import (
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/secrets"
 	"github.com/grafana/grafana/pkg/services/secrets/kvstore"
 	"github.com/grafana/grafana/pkg/setting"
+)
+
+const (
+	maxDatasourceNameLen = 190
+	maxDatasourceUrlLen  = 255
 )
 
 type Service struct {
@@ -36,6 +44,7 @@ type Service struct {
 	ac                 accesscontrol.AccessControl
 	logger             log.Logger
 	db                 db.DB
+	pluginStore        pluginstore.Store
 
 	ptc proxyTransportCache
 }
@@ -53,7 +62,7 @@ type cachedRoundTripper struct {
 func ProvideService(
 	db db.DB, secretsService secrets.Service, secretsStore kvstore.SecretsKVStore, cfg *setting.Cfg,
 	features featuremgmt.FeatureToggles, ac accesscontrol.AccessControl, datasourcePermissionsService accesscontrol.DatasourcePermissionsService,
-	quotaService quota.Service,
+	quotaService quota.Service, pluginStore pluginstore.Store,
 ) (*Service, error) {
 	dslogger := log.New("datasources")
 	store := &SqlStore{db: db, logger: dslogger}
@@ -70,6 +79,7 @@ func ProvideService(
 		ac:                 ac,
 		logger:             dslogger,
 		db:                 db,
+		pluginStore:        pluginStore,
 	}
 
 	ac.RegisterScopeAttributeResolver(NewNameScopeResolver(store))
@@ -166,11 +176,23 @@ func (s *Service) GetAllDataSources(ctx context.Context, query *datasources.GetA
 }
 
 func (s *Service) GetDataSourcesByType(ctx context.Context, query *datasources.GetDataSourcesByTypeQuery) ([]*datasources.DataSource, error) {
+	if query.AliasIDs == nil {
+		// Populate alias IDs from plugin store
+		p, found := s.pluginStore.Plugin(ctx, query.Type)
+		if !found {
+			return nil, fmt.Errorf("plugin %s not found", query.Type)
+		}
+		query.AliasIDs = p.AliasIDs
+	}
 	return s.SQLStore.GetDataSourcesByType(ctx, query)
 }
 
 func (s *Service) AddDataSource(ctx context.Context, cmd *datasources.AddDataSourceCommand) (*datasources.DataSource, error) {
 	var dataSource *datasources.DataSource
+
+	if err := validateFields(cmd.Name, cmd.URL); err != nil {
+		return dataSource, err
+	}
 
 	return dataSource, s.db.InTransaction(ctx, func(ctx context.Context) error {
 		var err error
@@ -197,25 +219,20 @@ func (s *Service) AddDataSource(ctx context.Context, cmd *datasources.AddDataSou
 			return err
 		}
 
-		if !s.ac.IsDisabled() {
-			// This belongs in Data source permissions, and we probably want
-			// to do this with a hook in the store and rollback on fail.
-			// We can't use events, because there's no way to communicate
-			// failure, and we want "not being able to set default perms"
-			// to fail the creation.
-			permissions := []accesscontrol.SetResourcePermissionCommand{
-				{BuiltinRole: "Viewer", Permission: "Query"},
-				{BuiltinRole: "Editor", Permission: "Query"},
-			}
-			if cmd.UserID != 0 {
-				permissions = append(permissions, accesscontrol.SetResourcePermissionCommand{UserID: cmd.UserID, Permission: "Edit"})
-			}
-			if _, err := s.permissionsService.SetPermissions(ctx, cmd.OrgID, dataSource.UID, permissions...); err != nil {
-				return err
-			}
+		// This belongs in Data source permissions, and we probably want
+		// to do this with a hook in the store and rollback on fail.
+		// We can't use events, because there's no way to communicate
+		// failure, and we want "not being able to set default perms"
+		// to fail the creation.
+		permissions := []accesscontrol.SetResourcePermissionCommand{
+			{BuiltinRole: "Viewer", Permission: "Query"},
+			{BuiltinRole: "Editor", Permission: "Query"},
 		}
-
-		return nil
+		if cmd.UserID != 0 {
+			permissions = append(permissions, accesscontrol.SetResourcePermissionCommand{UserID: cmd.UserID, Permission: "Edit"})
+		}
+		_, err = s.permissionsService.SetPermissions(ctx, cmd.OrgID, dataSource.UID, permissions...)
+		return err
 	})
 }
 
@@ -231,6 +248,11 @@ func (s *Service) DeleteDataSource(ctx context.Context, cmd *datasources.DeleteD
 
 func (s *Service) UpdateDataSource(ctx context.Context, cmd *datasources.UpdateDataSourceCommand) (*datasources.DataSource, error) {
 	var dataSource *datasources.DataSource
+
+	if err := validateFields(cmd.Name, cmd.URL); err != nil {
+		return dataSource, err
+	}
+
 	return dataSource, s.db.InTransaction(ctx, func(ctx context.Context) error {
 		var err error
 
@@ -241,6 +263,21 @@ func (s *Service) UpdateDataSource(ctx context.Context, cmd *datasources.UpdateD
 		dataSource, err = s.SQLStore.GetDataSource(ctx, query)
 		if err != nil {
 			return err
+		}
+
+		if cmd.Name != "" && cmd.Name != dataSource.Name {
+			query := &datasources.GetDataSourceQuery{
+				Name:  cmd.Name,
+				OrgID: cmd.OrgID,
+			}
+			exist, err := s.SQLStore.GetDataSource(ctx, query)
+			if exist != nil {
+				return datasources.ErrDataSourceNameExists
+			}
+
+			if err != nil && !errors.Is(err, datasources.ErrDataSourceNotFound) {
+				return err
+			}
 		}
 
 		err = s.fillWithSecureJSONData(ctx, cmd, dataSource)
@@ -334,7 +371,7 @@ func (s *Service) DecryptedValues(ctx context.Context, ds *datasources.DataSourc
 	if exist {
 		err = json.Unmarshal([]byte(secret), &decryptedValues)
 		if err != nil {
-			s.logger.Debug("failed to unmarshal secret value, using legacy secrets", "err", err)
+			s.logger.Debug("Failed to unmarshal secret value, using legacy secrets", "err", err)
 		}
 	}
 
@@ -424,7 +461,7 @@ func (s *Service) httpClientOptions(ctx context.Context, ds *datasources.DataSou
 	if ds.JsonData != nil {
 		opts.CustomOptions = ds.JsonData.MustMap()
 		// allow the plugin sdk to get the json data in JSONDataFromHTTPClientOptions
-		deepJsonDataCopy := make(map[string]interface{}, len(opts.CustomOptions))
+		deepJsonDataCopy := make(map[string]any, len(opts.CustomOptions))
 		for k, v := range opts.CustomOptions {
 			deepJsonDataCopy[k] = v
 		}
@@ -450,6 +487,35 @@ func (s *Service) httpClientOptions(ctx context.Context, ds *datasources.DataSou
 			User:     ds.User,
 			Password: password,
 		}
+	}
+
+	if ds.JsonData != nil && ds.JsonData.Get("enableSecureSocksProxy").MustBool(false) {
+		proxyOpts := &sdkproxy.Options{
+			Enabled: true,
+			Auth: &sdkproxy.AuthOptions{
+				Username: ds.JsonData.Get("secureSocksProxyUsername").MustString(ds.UID),
+			},
+			Timeouts: &sdkproxy.DefaultTimeoutOptions,
+			ClientCfg: &sdkproxy.ClientCfg{
+				ClientCert:   s.cfg.SecureSocksDSProxy.ClientCert,
+				ClientKey:    s.cfg.SecureSocksDSProxy.ClientKey,
+				RootCA:       s.cfg.SecureSocksDSProxy.RootCA,
+				ProxyAddress: s.cfg.SecureSocksDSProxy.ProxyAddress,
+				ServerName:   s.cfg.SecureSocksDSProxy.ServerName,
+			},
+		}
+
+		if val, exists, err := s.DecryptedValue(ctx, ds, "secureSocksProxyPassword"); err == nil && exists {
+			proxyOpts.Auth.Password = val
+		}
+		if val, err := ds.JsonData.Get("timeout").Float64(); err == nil {
+			proxyOpts.Timeouts.Timeout = time.Duration(val) * time.Second
+		}
+		if val, err := ds.JsonData.Get("keepAlive").Float64(); err == nil {
+			proxyOpts.Timeouts.KeepAlive = time.Duration(val) * time.Second
+		}
+
+		opts.ProxyOptions = proxyOpts
 	}
 
 	if ds.JsonData != nil && ds.JsonData.Get("sigV4Auth").MustBool(false) && setting.SigV4AuthEnabled {
@@ -614,9 +680,11 @@ func (s *Service) fillWithSecureJSONData(ctx context.Context, cmd *datasources.U
 		cmd.SecureJsonData = make(map[string]string)
 	}
 
-	for k, v := range decrypted {
-		if _, ok := cmd.SecureJsonData[k]; !ok {
-			cmd.SecureJsonData[k] = v
+	if !cmd.IgnoreOldSecureJsonData {
+		for k, v := range decrypted {
+			if _, ok := cmd.SecureJsonData[k]; !ok {
+				cmd.SecureJsonData[k] = v
+			}
 		}
 	}
 
@@ -626,6 +694,18 @@ func (s *Service) fillWithSecureJSONData(ctx context.Context, cmd *datasources.U
 		if err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func validateFields(name, url string) error {
+	if len(name) > maxDatasourceNameLen {
+		return datasources.ErrDataSourceNameInvalid.Errorf("max length is %d", maxDatasourceNameLen)
+	}
+
+	if len(url) > maxDatasourceUrlLen {
+		return datasources.ErrDataSourceURLInvalid.Errorf("max length is %d", maxDatasourceUrlLen)
 	}
 
 	return nil

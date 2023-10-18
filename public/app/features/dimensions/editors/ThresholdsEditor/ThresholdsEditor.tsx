@@ -9,18 +9,9 @@ import {
   Threshold,
   ThresholdsConfig,
   ThresholdsMode,
-} from '@grafana/data';
-import {
-  Button,
-  ColorPicker,
-  colors,
-  IconButton,
-  Input,
-  Label,
-  RadioButtonGroup,
-  stylesFactory,
   ThemeContext,
-} from '@grafana/ui';
+} from '@grafana/data';
+import { Button, ColorPicker, colors, IconButton, Input, Label, RadioButtonGroup, stylesFactory } from '@grafana/ui';
 
 const modes: Array<SelectableValue<ThresholdsMode>> = [
   { value: ThresholdsMode.Absolute, label: 'Absolute', description: 'Pick thresholds based on the absolute values' },
@@ -199,10 +190,10 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
         }
         suffix={
           <IconButton
-            aria-label={`Remove ${ariaLabel}`}
             className={styles.trashIcon}
             name="trash-alt"
             onClick={() => this.onRemoveThreshold(threshold)}
+            tooltip={`Remove ${ariaLabel}`}
           />
         }
       />

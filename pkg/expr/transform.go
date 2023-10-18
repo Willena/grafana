@@ -8,6 +8,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 
+	"github.com/grafana/grafana/pkg/services/auth/identity"
 	"github.com/grafana/grafana/pkg/services/datasources"
 )
 
@@ -17,7 +18,7 @@ type Request struct {
 	Debug   bool
 	OrgId   int64
 	Queries []Query
-	User    *backend.User
+	User    identity.Requester
 }
 
 // Query is like plugins.DataSubQuery, but with a a time range, and only the UID
@@ -135,10 +136,4 @@ func hiddenRefIDs(queries []Query) (map[string]struct{}, error) {
 		}
 	}
 	return hidden, nil
-}
-
-func (s *Service) decryptSecureJsonDataFn(ctx context.Context) func(ds *datasources.DataSource) (map[string]string, error) {
-	return func(ds *datasources.DataSource) (map[string]string, error) {
-		return s.dataSourceService.DecryptedValues(ctx, ds)
-	}
 }

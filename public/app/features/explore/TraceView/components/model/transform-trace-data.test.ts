@@ -47,7 +47,7 @@ describe('deduplicateTags()', () => {
       { key: 'a.ip', value: '8.8.8.8' },
     ]);
 
-    expect(tagsInfo.tags).toEqual([
+    expect(tagsInfo.dedupedTags).toEqual([
       { key: 'b.ip', value: '8.8.4.4' },
       { key: 'b.ip', value: '8.8.8.8' },
       { key: 'a.ip', value: '8.8.8.8' },
@@ -138,6 +138,58 @@ describe('transformTraceData()', () => {
       traceID: undefined,
       processes,
       spans,
+    } as unknown as TraceResponse;
+
+    expect(transformTraceData(traceData)).toEqual(null);
+  });
+
+  it('should return null for any span without a spanID', () => {
+    const traceData = {
+      traceID,
+      processes,
+      spans: [
+        {
+          traceID,
+          operationName: 'rootOperation',
+          references: [
+            {
+              refType: 'CHILD_OF',
+              traceID,
+              spanID: rootSpanID,
+            },
+          ],
+          startTime,
+          duration,
+          tags: [],
+          processID: 'p1',
+        },
+      ],
+    } as unknown as TraceResponse;
+
+    expect(transformTraceData(traceData)).toEqual(null);
+  });
+
+  it('should return null for any span without a processID', () => {
+    const traceData = {
+      traceID,
+      processes,
+      spans: [
+        {
+          traceID,
+          spanID: '41f71485ed2593e4',
+          operationName: 'rootOperation',
+          references: [
+            {
+              refType: 'CHILD_OF',
+              traceID,
+              spanID: rootSpanID,
+            },
+          ],
+          startTime,
+          duration,
+          tags: [],
+        },
+      ],
     } as unknown as TraceResponse;
 
     expect(transformTraceData(traceData)).toEqual(null);

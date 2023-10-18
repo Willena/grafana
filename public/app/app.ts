@@ -3,7 +3,6 @@ import 'core-js';
 import 'regenerator-runtime/runtime';
 
 import 'whatwg-fetch'; // fetch polyfill needed for PhantomJs rendering
-import './polyfills/old-mediaquerylist'; // Safari < 14 does not have mql.addEventListener()
 import 'file-saver';
 import 'jquery';
 
@@ -53,6 +52,7 @@ import { AppChromeService } from './core/components/AppChrome/AppChromeService';
 import { getAllOptionEditors, getAllStandardFieldConfigs } from './core/components/OptionsUI/registry';
 import { PluginPage } from './core/components/Page/PluginPage';
 import { GrafanaContextType } from './core/context/GrafanaContext';
+import { initIconCache } from './core/icons/iconBundle';
 import { initializeI18n } from './core/internationalization';
 import { interceptLinkClicks } from './core/navigation/patch/interceptLinkClicks';
 import { ModalManager } from './core/services/ModalManager';
@@ -66,21 +66,24 @@ import { GA4EchoBackend } from './core/services/echo/backends/analytics/GA4Backe
 import { GAEchoBackend } from './core/services/echo/backends/analytics/GABackend';
 import { RudderstackBackend } from './core/services/echo/backends/analytics/RudderstackBackend';
 import { GrafanaJavascriptAgentBackend } from './core/services/echo/backends/grafana-javascript-agent/GrafanaJavascriptAgentBackend';
-import { SentryEchoBackend } from './core/services/echo/backends/sentry/SentryBackend';
 import { KeybindingSrv } from './core/services/keybindingSrv';
+import { startMeasure, stopMeasure } from './core/utils/metrics';
 import { initDevFeatures } from './dev';
+import { initAuthConfig } from './features/auth-config';
 import { getTimeSrv } from './features/dashboard/services/TimeSrv';
 import { initGrafanaLive } from './features/live';
 import { PanelDataErrorView } from './features/panel/components/PanelDataErrorView';
 import { PanelRenderer } from './features/panel/components/PanelRenderer';
 import { DatasourceSrv } from './features/plugins/datasource_srv';
 import { createPluginExtensionRegistry } from './features/plugins/extensions/createPluginExtensionRegistry';
+import { getCoreExtensionConfigurations } from './features/plugins/extensions/getCoreExtensionConfigurations';
 import { getPluginExtensions } from './features/plugins/extensions/getPluginExtensions';
 import { importPanelPlugin, syncGetPanelPlugin } from './features/plugins/importPanelPlugin';
 import { preloadPlugins, loadTransformerPlugins } from './features/plugins/pluginPreloader';
 import { QueryRunner } from './features/query/state/QueryRunner';
 import { runRequest } from './features/query/state/runRequest';
 import { initWindowRuntime } from './features/runtime/init';
+import { cleanupOldExpandedFolders } from './features/search/utils';
 import { variableAdapters } from './features/variables/adapters';
 import { createAdHocVariableAdapter } from './features/variables/adhoc/adapter';
 import { createConstantVariableAdapter } from './features/variables/constant/adapter';
@@ -120,6 +123,9 @@ export class GrafanaApp {
 
       setBackendSrv(backendSrv);
       initEchoSrv();
+      initIconCache();
+      // This needs to be done after the `initEchoSrv` since it is being used under the hood.
+      startMeasure('frontend_app_init');
       addClassIfNoOverlayScrollbar();
       setLocale(config.bootData.user.locale);
       setWeekStart(config.bootData.user.weekStart);
@@ -129,6 +135,8 @@ export class GrafanaApp {
       setLocationSrv(locationService);
       setTimeZoneResolver(() => config.bootData.user.timezone);
       initGrafanaLive();
+
+      initAuthConfig();
 
       // Expose the app-wide eventbus
       setAppEvents(appEvents);
@@ -194,9 +202,16 @@ export class GrafanaApp {
       await loadTransformerPlugins(config.transformers, standardTransformersRegistry )
 
 
-      // Create extension registry out of the preloaded plugins
+      // Create extension registry out of preloaded plugins and core extensions
+      const extensionRegistry = createPluginExtensionRegistry([
+        { pluginId: 'grafana', extensionConfigs: getCoreExtensionConfigurations() },
+        ...preloadResults,
+      ]);
+
+      // Expose the getPluginExtension function via grafana-runtime
       const pluginExtensionGetter: GetPluginExtensions = (options) =>
-        getPluginExtensions({ ...options, registry: createPluginExtensionRegistry(preloadResults) });
+        getPluginExtensions({ ...options, registry: extensionRegistry });
+
       setPluginExtensionGetter(pluginExtensionGetter);
 
       // initialize chrome service
@@ -206,6 +221,13 @@ export class GrafanaApp {
 
       // Read initial kiosk mode from url at app startup
       chromeService.setKioskModeFromUrl(queryParams.kiosk);
+
+      // Clean up old search local storage values
+      try {
+        cleanupOldExpandedFolders();
+      } catch (err) {
+        console.warn('Failed to clean up old expanded folders', err);
+      }
 
       this.context = {
         backend: backendSrv,
@@ -224,6 +246,8 @@ export class GrafanaApp {
     } catch (error) {
       console.error('Failed to start Grafana', error);
       window.__grafana_load_failed();
+    } finally {
+      stopMeasure('frontend_app_init');
     }
   }
 }
@@ -263,15 +287,6 @@ function initEchoSrv() {
     registerEchoBackend(new PerformanceBackend({}));
   }
 
-  if (config.sentry.enabled) {
-    registerEchoBackend(
-      new SentryEchoBackend({
-        ...config.sentry,
-        user: config.bootData.user,
-        buildInfo: config.buildInfo,
-      })
-    );
-  }
   if (config.grafanaJavascriptAgent.enabled) {
     registerEchoBackend(
       new GrafanaJavascriptAgentBackend({
@@ -314,6 +329,7 @@ function initEchoSrv() {
         user: config.bootData.user,
         sdkUrl: config.rudderstackSdkUrl,
         configUrl: config.rudderstackConfigUrl,
+        buildInfo: config.buildInfo,
       })
     );
   }

@@ -11,12 +11,14 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/datasource"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
+	sdkproxy "github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/grafana/grafana-plugin-sdk-go/data/sqlutil"
 
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tsdb/sqleng"
+	"github.com/grafana/grafana/pkg/tsdb/sqleng/proxyutil"
 )
 
 var logger = log.New("tsdb.postgres")
@@ -34,8 +36,8 @@ type Service struct {
 	im         instancemgmt.InstanceManager
 }
 
-func (s *Service) getDSInfo(pluginCtx backend.PluginContext) (*sqleng.DataSourceHandler, error) {
-	i, err := s.im.Get(pluginCtx)
+func (s *Service) getDSInfo(ctx context.Context, pluginCtx backend.PluginContext) (*sqleng.DataSourceHandler, error) {
+	i, err := s.im.Get(ctx, pluginCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +46,7 @@ func (s *Service) getDSInfo(pluginCtx backend.PluginContext) (*sqleng.DataSource
 }
 
 func (s *Service) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
-	dsInfo, err := s.getDSInfo(req.PluginContext)
+	dsInfo, err := s.getDSInfo(ctx, req.PluginContext)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +54,7 @@ func (s *Service) QueryData(ctx context.Context, req *backend.QueryDataRequest) 
 }
 
 func (s *Service) newInstanceSettings(cfg *setting.Cfg) datasource.InstanceFactoryFunc {
-	return func(settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	return func(_ context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 		logger.Debug("Creating Postgres query endpoint")
 		jsonData := sqleng.JsonData{
 			MaxOpenConns:        cfg.SqlDatasourceMaxOpenConnsDefault,
@@ -95,8 +97,9 @@ func (s *Service) newInstanceSettings(cfg *setting.Cfg) datasource.InstanceFacto
 
 		driverName := "postgres"
 		// register a proxy driver if the secure socks proxy is enabled
-		if cfg.SecureSocksDSProxy.Enabled && jsonData.SecureDSProxy {
-			driverName, err = createPostgresProxyDriver(&cfg.SecureSocksDSProxy, cnnstr)
+		proxyOpts := proxyutil.GetSQLProxyOptions(cfg.SecureSocksDSProxy, dsInfo)
+		if sdkproxy.New(proxyOpts).SecureSocksProxyEnabled() {
+			driverName, err = createPostgresProxyDriver(cnnstr, proxyOpts)
 			if err != nil {
 				return "", nil
 			}
@@ -112,7 +115,7 @@ func (s *Service) newInstanceSettings(cfg *setting.Cfg) datasource.InstanceFacto
 
 		queryResultTransformer := postgresQueryResultTransformer{}
 
-		handler, err := sqleng.NewQueryDataHandler(config, &queryResultTransformer, newPostgresMacroEngine(dsInfo.JsonData.Timescaledb),
+		handler, err := sqleng.NewQueryDataHandler(cfg, config, &queryResultTransformer, newPostgresMacroEngine(dsInfo.JsonData.Timescaledb),
 			logger)
 		if err != nil {
 			logger.Error("Failed connecting to Postgres", "err", err)
@@ -208,7 +211,7 @@ func (t *postgresQueryResultTransformer) TransformQueryError(_ log.Logger, err e
 
 // CheckHealth pings the connected SQL database
 func (s *Service) CheckHealth(ctx context.Context, req *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
-	dsHandler, err := s.getDSInfo(req.PluginContext)
+	dsHandler, err := s.getDSInfo(ctx, req.PluginContext)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +235,7 @@ func (t *postgresQueryResultTransformer) GetConverterList() []sqlutil.StringConv
 			ConversionFunc: func(in *string) (*string, error) { return in, nil },
 			Replacer: &sqlutil.StringFieldReplacer{
 				OutputFieldType: data.FieldTypeNullableFloat64,
-				ReplaceFunc: func(in *string) (interface{}, error) {
+				ReplaceFunc: func(in *string) (any, error) {
 					if in == nil {
 						return nil, nil
 					}
@@ -251,7 +254,7 @@ func (t *postgresQueryResultTransformer) GetConverterList() []sqlutil.StringConv
 			ConversionFunc: func(in *string) (*string, error) { return in, nil },
 			Replacer: &sqlutil.StringFieldReplacer{
 				OutputFieldType: data.FieldTypeNullableFloat64,
-				ReplaceFunc: func(in *string) (interface{}, error) {
+				ReplaceFunc: func(in *string) (any, error) {
 					if in == nil {
 						return nil, nil
 					}
@@ -270,7 +273,7 @@ func (t *postgresQueryResultTransformer) GetConverterList() []sqlutil.StringConv
 			ConversionFunc: func(in *string) (*string, error) { return in, nil },
 			Replacer: &sqlutil.StringFieldReplacer{
 				OutputFieldType: data.FieldTypeNullableFloat64,
-				ReplaceFunc: func(in *string) (interface{}, error) {
+				ReplaceFunc: func(in *string) (any, error) {
 					if in == nil {
 						return nil, nil
 					}
@@ -289,7 +292,7 @@ func (t *postgresQueryResultTransformer) GetConverterList() []sqlutil.StringConv
 			ConversionFunc: func(in *string) (*string, error) { return in, nil },
 			Replacer: &sqlutil.StringFieldReplacer{
 				OutputFieldType: data.FieldTypeNullableInt16,
-				ReplaceFunc: func(in *string) (interface{}, error) {
+				ReplaceFunc: func(in *string) (any, error) {
 					if in == nil {
 						return nil, nil
 					}

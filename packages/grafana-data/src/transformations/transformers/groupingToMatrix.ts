@@ -1,8 +1,14 @@
 import { map } from 'rxjs/operators';
 
-import { MutableDataFrame } from '../../dataframe';
 import { getFieldDisplayName } from '../../field/fieldState';
-import { DataFrame, DataTransformerInfo, Field, FieldType, SpecialValue } from '../../types';
+import {
+  DataFrame,
+  DataTransformerInfo,
+  Field,
+  FieldType,
+  SpecialValue,
+  TransformationApplicabilityLevels,
+} from '../../types';
 import { fieldMatchers } from '../matchers';
 import { FieldMatcherID } from '../matchers/ids';
 
@@ -34,7 +40,29 @@ export const groupingToMatrixTransformer: DataTransformerInfo<GroupingToMatrixTr
     rowField: DEFAULT_ROW_FIELD,
     valueField: DEFAULT_VALUE_FIELD,
   },
+  /**
+   * Grouping to matrix requires at least 3 fields to work.
+   */
+  isApplicable: (data: DataFrame[]) => {
+    let numFields = 0;
 
+    for (const frame of data) {
+      numFields += frame.fields.length;
+    }
+
+    return numFields >= 3
+      ? TransformationApplicabilityLevels.Applicable
+      : TransformationApplicabilityLevels.NotApplicable;
+  },
+  isApplicableDescription: (data: DataFrame[]) => {
+    let numFields = 0;
+
+    for (const frame of data) {
+      numFields += frame.fields.length;
+    }
+
+    return `Grouping to matrix requiers at least 3 fields to work. Currently there are ${numFields} fields.`;
+  },
   operator: (options) => (source) =>
     source.pipe(
       map((data) => {
@@ -75,13 +103,14 @@ export const groupingToMatrixTransformer: DataTransformerInfo<GroupingToMatrixTr
           matrixValues[columnName][rowName] = value;
         }
 
-        const resultFrame = new MutableDataFrame();
-
-        resultFrame.addField({
-          name: rowColumnField,
-          values: rowValues,
-          type: FieldType.string,
-        });
+        const fields: Field[] = [
+          {
+            name: rowColumnField,
+            values: rowValues,
+            type: FieldType.string,
+            config: {},
+          },
+        ];
 
         for (const columnName of columnValues) {
           let values = [];
@@ -98,7 +127,7 @@ export const groupingToMatrixTransformer: DataTransformerInfo<GroupingToMatrixTr
             valueField.config = { ...valueField.config, displayNameFromDS: undefined };
           }
 
-          resultFrame.addField({
+          fields.push({
             name: columnName.toString(),
             values: values,
             config: valueField.config,
@@ -106,7 +135,12 @@ export const groupingToMatrixTransformer: DataTransformerInfo<GroupingToMatrixTr
           });
         }
 
-        return [resultFrame];
+        return [
+          {
+            fields,
+            length: rowValues.length,
+          },
+        ];
       })
     ),
 };

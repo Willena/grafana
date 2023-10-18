@@ -1,72 +1,59 @@
 import { css } from '@emotion/css';
-import React from 'react';
+import React, { useMemo } from 'react';
 
 import { GrafanaTheme2 } from '@grafana/data';
-import { Button, useStyles2 } from '@grafana/ui';
+import { config, reportInteraction } from '@grafana/runtime';
+import { Button, Tooltip, useStyles2 } from '@grafana/ui';
 import appEvents from 'app/core/app_events';
+import { t, Trans } from 'app/core/internationalization';
+import { useSearchStateManager } from 'app/features/search/state/SearchStateManager';
+import { useDispatch } from 'app/types';
 import { ShowModalReactEvent } from 'app/types/events';
 
-import {
-  useDeleteDashboardMutation,
-  useDeleteFolderMutation,
-  useMoveDashboardMutation,
-  useMoveFolderMutation,
-} from '../../api/browseDashboardsAPI';
-import { useActionSelectionState } from '../../state';
+import { useDeleteItemsMutation, useMoveItemsMutation } from '../../api/browseDashboardsAPI';
+import { setAllSelection, useActionSelectionState } from '../../state';
+import { DashboardTreeSelection } from '../../types';
 
 import { DeleteModal } from './DeleteModal';
 import { MoveModal } from './MoveModal';
 
-export interface Props {
-  // this is a complete hack to force a full rerender.
-  // TODO remove once we move everything to RTK query
-  onActionComplete?: () => void;
-}
+export interface Props {}
 
-export function BrowseActions({ onActionComplete }: Props) {
+export function BrowseActions() {
   const styles = useStyles2(getStyles);
+  const dispatch = useDispatch();
   const selectedItems = useActionSelectionState();
-  const [deleteDashboard] = useDeleteDashboardMutation();
-  const [deleteFolder] = useDeleteFolderMutation();
-  const [moveFolder] = useMoveFolderMutation();
-  const [moveDashboard] = useMoveDashboardMutation();
-  const selectedDashboards = Object.keys(selectedItems.dashboard).filter((uid) => selectedItems.dashboard[uid]);
-  const selectedFolders = Object.keys(selectedItems.folder).filter((uid) => selectedItems.folder[uid]);
+  const [deleteItems] = useDeleteItemsMutation();
+  const [moveItems] = useMoveItemsMutation();
+  const [, stateManager] = useSearchStateManager();
+
+  // Folders can only be moved if nested folders is enabled
+  const moveIsInvalid = useMemo(
+    () => !config.featureToggles.nestedFolders && Object.values(selectedItems.folder).some((v) => v),
+    [selectedItems]
+  );
+
+  const isSearching = stateManager.hasSearchFilters();
+
+  const onActionComplete = () => {
+    dispatch(setAllSelection({ isSelected: false, folderUID: undefined }));
+
+    if (isSearching) {
+      // Redo search query
+      stateManager.doSearchWithDebounce();
+    }
+  };
 
   const onDelete = async () => {
-    // Delete all the folders sequentially
-    // TODO error handling here
-    for (const folderUID of selectedFolders) {
-      await deleteFolder(folderUID).unwrap();
-    }
-
-    // Delete all the dashboards sequenetially
-    // TODO error handling here
-    for (const dashboardUID of selectedDashboards) {
-      await deleteDashboard(dashboardUID).unwrap();
-    }
-    onActionComplete?.();
+    await deleteItems({ selectedItems });
+    trackAction('delete', selectedItems);
+    onActionComplete();
   };
 
   const onMove = async (destinationUID: string) => {
-    // Move all the folders sequentially
-    // TODO error handling here
-    for (const folderUID of selectedFolders) {
-      await moveFolder({
-        folderUID,
-        destinationUID,
-      }).unwrap();
-    }
-
-    // Move all the dashboards sequentially
-    // TODO error handling here
-    for (const dashboardUID of selectedDashboards) {
-      await moveDashboard({
-        dashboardUID,
-        destinationUID,
-      }).unwrap();
-    }
-    onActionComplete?.();
+    await moveItems({ selectedItems, destinationUID });
+    trackAction('move', selectedItems);
+    onActionComplete();
   };
 
   const showMoveModal = () => {
@@ -93,13 +80,24 @@ export function BrowseActions({ onActionComplete }: Props) {
     );
   };
 
+  const moveButton = (
+    <Button onClick={showMoveModal} variant="secondary" disabled={moveIsInvalid}>
+      <Trans i18nKey="browse-dashboards.action.move-button">Move</Trans>
+    </Button>
+  );
+
   return (
     <div className={styles.row} data-testid="manage-actions">
-      <Button onClick={showMoveModal} variant="secondary">
-        Move
-      </Button>
+      {moveIsInvalid ? (
+        <Tooltip content={t('browse-dashboards.action.cannot-move-folders', 'Folders cannot be moved')}>
+          {moveButton}
+        </Tooltip>
+      ) : (
+        moveButton
+      )}
+
       <Button onClick={showDeleteModal} variant="destructive">
-        Delete
+        <Trans i18nKey="browse-dashboards.action.delete-button">Delete</Trans>
       </Button>
     </div>
   );
@@ -113,3 +111,21 @@ const getStyles = (theme: GrafanaTheme2) => ({
     marginBottom: theme.spacing(2),
   }),
 });
+
+const actionMap = {
+  move: 'grafana_manage_dashboards_item_moved',
+  delete: 'grafana_manage_dashboards_item_deleted',
+} as const;
+
+function trackAction(action: keyof typeof actionMap, selectedItems: Omit<DashboardTreeSelection, 'panel' | '$all'>) {
+  const selectedDashboards = Object.keys(selectedItems.dashboard).filter((uid) => selectedItems.dashboard[uid]);
+  const selectedFolders = Object.keys(selectedItems.folder).filter((uid) => selectedItems.folder[uid]);
+
+  reportInteraction(actionMap[action], {
+    item_counts: {
+      folder: selectedFolders.length,
+      dashboard: selectedDashboards.length,
+    },
+    source: 'tree_actions',
+  });
+}

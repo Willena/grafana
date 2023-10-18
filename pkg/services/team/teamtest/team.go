@@ -61,6 +61,10 @@ func (s *FakeService) RemoveTeamMember(ctx context.Context, cmd *team.RemoveTeam
 	return s.ExpectedError
 }
 
+func (s *FakeService) RemoveUsersMemberships(ctx context.Context, userID int64) error {
+	return s.ExpectedError
+}
+
 func (s *FakeService) GetUserTeamMemberships(ctx context.Context, orgID, userID int64, external bool) ([]*team.TeamMemberDTO, error) {
 	return s.ExpectedMembers, s.ExpectedError
 }
@@ -69,6 +73,5 @@ func (s *FakeService) GetTeamMembers(ctx context.Context, query *team.GetTeamMem
 	return s.ExpectedMembers, s.ExpectedError
 }
 
-func (s *FakeService) IsAdminOfTeams(ctx context.Context, query *team.IsAdminOfTeamsQuery) (bool, error) {
-	return s.ExpectedIsAdmin, s.ExpectedError
+func (s *FakeService) RegisterDelete(query string) {
 }
